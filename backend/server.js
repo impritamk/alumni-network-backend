@@ -73,8 +73,11 @@ app.post('/api/auth/register', async (req, res) => {
       firstName,
       lastName,
       passoutYear,
-      collegeDomain = 'college.edu'   // ⭐ correct default set
+      collegeDomain
     } = req.body;
+
+    // default domain
+    const domain = collegeDomain || 'college.edu';
 
     // Validate required fields
     if (!email || !password || !firstName || !lastName || !passoutYear) {
@@ -99,9 +102,9 @@ app.post('/api/auth/register', async (req, res) => {
       `INSERT INTO users (
         email, password, first_name, last_name, 
         passout_year, college_domain, verification_status
-      ) VALUES ($1, $2, $3, $4, $5, $6, 'verified') 
+      ) VALUES ($1, $2, $3, $4, $5, $6, 'verified')
       RETURNING id, email, first_name, last_name, verification_status`,
-      [email, hashedPassword, firstName, lastName, passoutYear, collegeDomain]
+      [email, hashedPassword, firstName, lastName, passoutYear, domain]
     );
 
     const user = result.rows[0];
@@ -351,4 +354,5 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 
 });
+
 
