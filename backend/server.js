@@ -1,4 +1,3 @@
-console.log(">>> RUNNING THIS FILE:", __filename);
 
 const express = require('express');
 const cors = require('cors');
@@ -356,6 +355,7 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 
 });
+
 
 
 
