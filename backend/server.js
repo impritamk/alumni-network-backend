@@ -73,27 +73,27 @@ app.post('/api/auth/register', async (req, res) => {
       firstName,
       lastName,
       passoutYear,
-      collegeDomain: 'college.edu'
+      collegeDomain = 'college.edu'   // ⭐ correct default set
     } = req.body;
-    
+
     // Validate required fields
     if (!email || !password || !firstName || !lastName || !passoutYear) {
       return res.status(400).json({ message: 'All fields are required' });
     }
-    
+
     // Check if user exists
     const existingUser = await pool.query(
       'SELECT id FROM users WHERE email = $1',
       [email]
     );
-    
+
     if (existingUser.rows.length > 0) {
       return res.status(400).json({ message: 'User already exists' });
     }
-    
+
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 12);
-    
+
     // Create user
     const result = await pool.query(
       `INSERT INTO users (
@@ -101,16 +101,16 @@ app.post('/api/auth/register', async (req, res) => {
         passout_year, college_domain, verification_status
       ) VALUES ($1, $2, $3, $4, $5, $6, 'verified') 
       RETURNING id, email, first_name, last_name, verification_status`,
-      [email, hashedPassword, firstName, lastName, passoutYear, collegeDomain || 'edu.in']
+      [email, hashedPassword, firstName, lastName, passoutYear, collegeDomain]
     );
-    
+
     const user = result.rows[0];
-    
+
     res.status(201).json({
       message: 'Registration successful',
       user
     });
-    
+
   } catch (error) {
     console.error('Registration error:', error);
     res.status(500).json({ message: 'Registration failed' });
@@ -351,3 +351,4 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 
 });
+
