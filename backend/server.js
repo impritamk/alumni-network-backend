@@ -73,7 +73,7 @@ app.post('/api/auth/register', async (req, res) => {
       firstName,
       lastName,
       passoutYear,
-      collegeDomain
+      collegeDomain: 'college.edu'
     } = req.body;
     
     // Validate required fields
@@ -349,4 +349,5 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+
 });
