@@ -34,15 +34,33 @@ pool.query("SELECT NOW()", (err) => {
 // --------------------------
 // EMAIL TRANSPORT (BREVO SMTP)
 // --------------------------
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,      // smtp-relay.brevo.com
-  port: Number(process.env.SMTP_PORT), // 587
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+const axios = require("axios");
+
+async function sendOtpEmail(email, otp) {
+  try {
+    await axios.post(
+      "https://api.brevo.com/v3/smtp/email",
+      {
+        sender: { email: process.env.FROM_EMAIL },
+        to: [{ email }],
+        subject: "Your OTP for Alumni Network",
+        htmlContent: `<h2>Your OTP is: <strong>${otp}</strong></h2>`
+      },
+      {
+        headers: {
+          "accept": "application/json",
+          "api-key": process.env.BREVO_API_KEY,
+          "content-type": "application/json"
+        }
+      }
+    );
+
+    console.log("OTP email sent using Brevo API");
+  } catch (err) {
+    console.error("OTP Email Error:", err.response?.data || err.message);
+  }
+}
+
 
 // --------------------------
 // MIDDLEWARE
@@ -105,65 +123,43 @@ app.post("/api/auth/register", async (req, res) => {
   try {
     const { email, password, firstName, lastName, passoutYear } = req.body;
 
-    if (!email || !password || !firstName || !lastName || !passoutYear) {
+    if (!email || !password || !firstName || !lastName || !passoutYear)
       return res.status(400).json({ message: "All fields are required" });
-    }
 
-    const collegeDomain = "college.edu"; // DEFAULT FIXED DOMAIN
-
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 12);
+    const { otp, expiry } = generateOtpAndExpiry();
 
-    // Generate OTP + expiry
-    const { otp, expiry } = generateOtpAndExpiry(10);
-
-    // Insert or update the user
     await pool.query(
       `INSERT INTO users (
          email, password, first_name, last_name, passout_year,
-         college_domain, verification_status, otp, otp_expires,
-         created_at, updated_at
+         verification_status, otp, otp_expires, created_at, updated_at
        )
-       VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,NOW(),NOW())
+       VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,NOW(),NOW())
        ON CONFLICT (email) DO UPDATE SET
          password = EXCLUDED.password,
          first_name = EXCLUDED.first_name,
          last_name = EXCLUDED.last_name,
          passout_year = EXCLUDED.passout_year,
-         college_domain = COALESCE(users.college_domain, EXCLUDED.college_domain, 'college.edu'),
          verification_status = 'pending',
          otp = EXCLUDED.otp,
          otp_expires = EXCLUDED.otp_expires,
          updated_at = NOW()`,
-      [
-        email,
-        hashedPassword,
-        firstName,
-        lastName,
-        passoutYear,
-        collegeDomain,
-        otp,
-        expiry
-      ]
+      [email, hashedPassword, firstName, lastName, passoutYear, otp, expiry]
     );
 
-    // SEND OTP EMAIL — ONLY ONCE ✔ FIXED
-    await transporter.sendMail({
-      from: process.env.FROM_EMAIL,
-      to: email,
-      subject: "Your OTP for Alumni Network",
-      html: `<h2>Your OTP is: <strong>${otp}</strong></h2>`,
-    });
+    // 👉 SEND OTP USING BREVO API
+    await sendOtpEmail(email, otp);
 
     console.log("OTP issued:", otp);
 
-    return res.json({ message: "OTP sent to email", email });
+    res.json({ message: "OTP sent to email", email });
 
-  } catch (error) {
-    console.error("Registration error:", error);
-    return res.status(500).json({ message: "Registration failed" });
+  } catch (err) {
+    console.error("Registration error:", err);
+    res.status(500).json({ message: "Registration failed" });
   }
 });
+
 
 // --------------------------
 // VERIFY OTP
@@ -506,5 +502,6 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
 
 
