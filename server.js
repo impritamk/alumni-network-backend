@@ -29,10 +29,12 @@ pool.query('SELECT NOW()', (err) => {
 
 // Nodemailer transporter (Gmail example)
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: process.env.SMTP_HOST,
+  port: Number(process.env.SMTP_PORT),
+  secure: false,
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
   }
 });
 
@@ -118,12 +120,13 @@ app.post('/api/auth/register', async (req, res) => {
     );
 
     // Send OTP email
-    const mailOptions = {
-      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-      to: email,
-      subject: 'Your OTP for Alumni Network',
-      text: `Your verification OTP is ${otp}. It expires in 10 minutes.`
-    };
+    await transporter.sendMail({
+  from: process.env.FROM_EMAIL,
+  to: email,
+  subject: "Your OTP Code",
+  html: `<h2>Your OTP is: ${otp}</h2>`,
+});
+
 
     // send email (catch but don't crash)
     transporter.sendMail(mailOptions, (err, info) => {
@@ -427,3 +430,4 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
