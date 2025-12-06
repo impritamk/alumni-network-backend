@@ -70,41 +70,47 @@ app.get("/api/health", (req, res) => {
 // ===========================
 // REGISTER (OTP BASED)
 // ===========================
-app.post("/api/auth/register", async (req, res) => {
+app.post('/api/auth/register', async (req, res) => {
   try {
-    const { email, password, firstName, lastName, passoutYear } = req.body;
+    const {
+      email,
+      password,
+      firstName,
+      lastName,
+      passoutYear
+    } = req.body;
 
-    if (!email || !password || !firstName || !lastName || !passoutYear)
+    const domain = "college.edu";  // 🔥 FIXED: always set
+
+    if (!email || !password || !firstName || !lastName || !passoutYear) {
       return res.status(400).json({ message: "All fields are required" });
+    }
 
-    // Hash password
-    const hashed = await bcrypt.hash(password, 12);
-
-    // Generate a 6-digit OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-
-    // Insert or update pending user
-    const result = await pool.query(
-      `INSERT INTO users (
-          email, password, first_name, last_name, passout_year,
-          verification_status, otp
-        )
-        VALUES ($1, $2, $3, $4, $5, 'pending', $6)
-        ON CONFLICT (email)
-        DO UPDATE SET 
-          password = EXCLUDED.password,
-          otp = EXCLUDED.otp,
-          verification_status = 'pending'
-        RETURNING id, email, verification_status`,
-      [email, hashed, firstName, lastName, passoutYear, otp]
+    const existingUser = await pool.query(
+      "SELECT id FROM users WHERE email = $1",
+      [email]
     );
 
-    console.log("OTP for testing:", otp);
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({ message: "User already exists" });
+    }
 
-    res.json({
-      message: "OTP sent to your email (printed in server log for now).",
-      email,
+    const hashedPassword = await bcrypt.hash(password, 12);
+
+    const result = await pool.query(
+      `INSERT INTO users (
+        email, password, first_name, last_name, passout_year,
+        college_domain, verification_status
+      ) VALUES ($1, $2, $3, $4, $5, $6, 'verified')
+      RETURNING id, email, first_name, last_name, verification_status`,
+      [email, hashedPassword, firstName, lastName, passoutYear, domain]
+    );
+
+    res.status(201).json({
+      message: "Registration successful",
+      user: result.rows[0]
     });
+
   } catch (error) {
     console.error("Registration error:", error);
     res.status(500).json({ message: "Registration failed" });
@@ -404,3 +410,4 @@ app.use((err, req, res, next) => {
 // ===========================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
