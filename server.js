@@ -397,7 +397,42 @@ app.put("/api/users/profile", verifyToken, async (req, res) => {
     res.status(500).json({ message: "Failed to update profile" });
   }
 });
+// GET SINGLE USER PROFILE BY ID
+app.get("/api/users/:id", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
 
+    const q = await pool.query(
+      `SELECT id, first_name, last_name, email, headline, bio, 
+              passout_year, skills, current_company, current_position, 
+              location, website, linkedin, github
+       FROM users 
+       WHERE id = $1 AND verification_status = 'verified'`,
+      [id]
+    );
+
+    if (q.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.json({ user: q.rows[0] });
+
+  } catch (err) {
+    console.error("Get user error:", err);
+    res.status(500).json({ message: "Failed to fetch user" });
+  }
+});
+
+
+// DIRECTORY LISTING
+app.get("/api/users/directory", verifyToken, async (req, res) => {
+  // ... existing code
+});
+
+// 👇 ADD THE NEW ENDPOINT HERE
+app.get("/api/users/:id", verifyToken, async (req, res) => {
+  // ... new code above
+});
 // ==========================================
 //                JOBS
 // ==========================================
@@ -502,6 +537,7 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
 
 
 
