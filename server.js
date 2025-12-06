@@ -99,38 +99,55 @@ app.get("/api/health", (req, res) => {
 // ==========================================
 
 // --------------------------
-// REGISTER → Send OTP
+// REGISTER → Send OTP (FIXED VERSION)
 // --------------------------
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { email, password, firstName, lastName, passoutYear } = req.body;
 
-    if (!email || !password || !firstName || !lastName || !passoutYear)
+    if (!email || !password || !firstName || !lastName || !passoutYear) {
       return res.status(400).json({ message: "All fields are required" });
+    }
 
+    const collegeDomain = "college.edu"; // DEFAULT FIXED DOMAIN
+
+    // Hash password
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    const { otp, expiry } = generateOtpAndExpiry();
+    // Generate OTP + expiry
+    const { otp, expiry } = generateOtpAndExpiry(10);
 
+    // Insert or update the user
     await pool.query(
       `INSERT INTO users (
          email, password, first_name, last_name, passout_year,
-         verification_status, otp, otp_expires, created_at, updated_at
+         college_domain, verification_status, otp, otp_expires,
+         created_at, updated_at
        )
-       VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,NOW(),NOW())
+       VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,NOW(),NOW())
        ON CONFLICT (email) DO UPDATE SET
          password = EXCLUDED.password,
          first_name = EXCLUDED.first_name,
          last_name = EXCLUDED.last_name,
          passout_year = EXCLUDED.passout_year,
+         college_domain = COALESCE(users.college_domain, EXCLUDED.college_domain, 'college.edu'),
          verification_status = 'pending',
          otp = EXCLUDED.otp,
          otp_expires = EXCLUDED.otp_expires,
          updated_at = NOW()`,
-      [email, hashedPassword, firstName, lastName, passoutYear, otp, expiry]
+      [
+        email,
+        hashedPassword,
+        firstName,
+        lastName,
+        passoutYear,
+        collegeDomain,
+        otp,
+        expiry
+      ]
     );
 
-    // Send OTP Email
+    // SEND OTP EMAIL — ONLY ONCE ✔ FIXED
     await transporter.sendMail({
       from: process.env.FROM_EMAIL,
       to: email,
@@ -140,11 +157,11 @@ app.post("/api/auth/register", async (req, res) => {
 
     console.log("OTP issued:", otp);
 
-    res.json({ message: "OTP sent to email", email });
+    return res.json({ message: "OTP sent to email", email });
 
-  } catch (err) {
-    console.error("Registration error:", err);
-    res.status(500).json({ message: "Registration failed" });
+  } catch (error) {
+    console.error("Registration error:", error);
+    return res.status(500).json({ message: "Registration failed" });
   }
 });
 
@@ -489,4 +506,5 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
 
