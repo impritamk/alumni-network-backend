@@ -457,11 +457,12 @@ app.get("/api/jobs", verifyToken, async (req, res) => {
   }
 });
 
-// CREATE JOB
+// CREATE JOB - FIXED VERSION
 app.post("/api/jobs", verifyToken, async (req, res) => {
   try {
-    console.log("📝 Creating job with data:", req.body);
-    console.log("👤 Posted by user ID:", req.userId);
+    console.log("📝 Received job post request");
+    console.log("User ID:", req.userId);
+    console.log("Request body:", req.body);
     
     const {
       title,
@@ -476,34 +477,20 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
 
     // Validate required fields
     if (!title || !company || !description) {
-      console.log("❌ Missing required fields");
+      console.log("❌ Validation failed - missing required fields");
       return res.status(400).json({ 
         message: "Title, company, and description are required" 
       });
     }
 
-    // First, verify the jobs table exists
-    const tableCheck = await pool.query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_name = 'jobs'
-      );
-    `);
-    
-    if (!tableCheck.rows[0].exists) {
-      console.error("❌ Jobs table does not exist!");
-      return res.status(500).json({ 
-        message: "Database not properly configured. Jobs table missing." 
-      });
-    }
+    console.log("✅ Validation passed, inserting into database...");
 
-    // Try to insert
     const q = await pool.query(
       `INSERT INTO jobs (
          posted_by, title, company, description, requirements,
-         location, salary_range, job_type, experience_level, created_at
+         location, salary_range, job_type, experience_level, is_active, created_at
        )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, NOW())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW())
        RETURNING *`,
       [
         req.userId,
@@ -515,22 +502,27 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
         salaryRange || null,
         jobType || null,
         experienceLevel || null,
+        true
       ]
     );
 
-    console.log("✅ Job created successfully:", q.rows[0].id);
-    res.status(201).json({ job: q.rows[0] });
+    console.log("✅ Job created with ID:", q.rows[0].id);
+    res.status(201).json({ job: q.rows[0], message: "Job posted successfully" });
 
   } catch (err) {
-    console.error("❌ Create job error:", err);
-    console.error("Error details:", err.message);
-    console.error("Error stack:", err.stack);
+    console.error("❌ CREATE JOB ERROR:");
+    console.error("Error name:", err.name);
+    console.error("Error message:", err.message);
+    console.error("Error code:", err.code);
+    console.error("Error detail:", err.detail);
+    console.error("Full error:", err);
     
-    // Return detailed error in development
+    // Send detailed error back
     res.status(500).json({ 
       message: "Failed to create job",
       error: err.message,
-      detail: err.detail || "No additional details"
+      code: err.code,
+      detail: err.detail
     });
   }
 });
@@ -572,6 +564,7 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
 
 
 
