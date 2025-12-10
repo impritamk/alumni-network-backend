@@ -464,7 +464,7 @@ app.get("/api/jobs", verifyToken, async (req, res) => {
   }
 });
 
-// CREATE JOB - FIXED VERSION
+// CREATE JOB - UPDATE THIS SECTION
 app.post("/api/jobs", verifyToken, async (req, res) => {
   try {
     console.log("📝 Received job post request");
@@ -480,6 +480,7 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
       salaryRange,
       jobType,
       experienceLevel,
+      expiresAt  // ADD THIS LINE
     } = req.body;
 
     // Validate required fields
@@ -495,9 +496,9 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
     const q = await pool.query(
       `INSERT INTO jobs (
          posted_by, title, company, description, requirements,
-         location, salary_range, job_type, experience_level, is_active, created_at
+         location, salary_range, job_type, experience_level, expires_at, is_active, created_at
        )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, NOW())
        RETURNING *`,
       [
         req.userId,
@@ -509,6 +510,7 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
         salaryRange || null,
         jobType || null,
         experienceLevel || null,
+        expiresAt || null,  // ADD THIS LINE
         true
       ]
     );
@@ -518,13 +520,10 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
 
   } catch (err) {
     console.error("❌ CREATE JOB ERROR:");
-    console.error("Error name:", err.name);
     console.error("Error message:", err.message);
     console.error("Error code:", err.code);
     console.error("Error detail:", err.detail);
-    console.error("Full error:", err);
     
-    // Send detailed error back
     res.status(500).json({ 
       message: "Failed to create job",
       error: err.message,
@@ -707,6 +706,7 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
 
 
 
