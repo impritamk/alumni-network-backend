@@ -437,16 +437,23 @@ app.get("/api/users/:id", verifyToken, async (req, res) => {
 //                JOBS
 // ==========================================
 
-// GET JOBS
+// GET JOBS - UPDATED
 app.get("/api/jobs", verifyToken, async (req, res) => {
   try {
     const q = await pool.query(
-      `SELECT j.*, u.first_name, u.last_name
+      `SELECT 
+        j.*,
+        u.first_name,
+        u.last_name,
+        COUNT(ja.id) as application_count
        FROM jobs j
        JOIN users u ON j.posted_by = u.id
-       WHERE j.is_active = true
+       LEFT JOIN job_applications ja ON j.id = ja.job_id
+       WHERE j.is_active = true OR j.posted_by = $1
+       GROUP BY j.id, u.first_name, u.last_name
        ORDER BY j.created_at DESC
-       LIMIT 50`
+       LIMIT 50`,
+      [req.userId]
     );
 
     res.json({ jobs: q.rows });
@@ -527,6 +534,142 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
   }
 });
 // ==========================================
+//         JOB APPLICATION ROUTES
+// ==========================================
+
+// APPLY TO A JOB
+app.post("/api/jobs/:jobId/apply", verifyToken, async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const { coverLetter, resume, phone, linkedinUrl } = req.body;
+    
+    console.log("📝 Job application from user:", req.userId, "for job:", jobId);
+
+    // Check if already applied
+    const existing = await pool.query(
+      "SELECT id FROM job_applications WHERE job_id = $1 AND applicant_id = $2",
+      [jobId, req.userId]
+    );
+
+    if (existing.rows.length > 0) {
+      return res.status(409).json({ message: "You have already applied to this job" });
+    }
+
+    // Check if job is still active
+    const jobCheck = await pool.query(
+      "SELECT is_active, expires_at FROM jobs WHERE id = $1",
+      [jobId]
+    );
+
+    if (jobCheck.rows.length === 0) {
+      return res.status(404).json({ message: "Job not found" });
+    }
+
+    const job = jobCheck.rows[0];
+    if (!job.is_active) {
+      return res.status(400).json({ message: "This job is no longer accepting applications" });
+    }
+
+    if (job.expires_at && new Date(job.expires_at) < new Date()) {
+      return res.status(400).json({ message: "This job posting has expired" });
+    }
+
+    // Create application
+    const result = await pool.query(
+      `INSERT INTO job_applications (
+        job_id, applicant_id, cover_letter, resume_url, phone, linkedin_url, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      RETURNING *`,
+      [jobId, req.userId, coverLetter, resume, phone, linkedinUrl || null]
+    );
+
+    console.log("✅ Application submitted:", result.rows[0].id);
+    res.status(201).json({ 
+      application: result.rows[0],
+      message: "Application submitted successfully" 
+    });
+
+  } catch (err) {
+    console.error("❌ Apply job error:", err);
+    res.status(500).json({ message: "Failed to submit application" });
+  }
+});
+
+// UPDATE JOB STATUS (mark as closed)
+app.put("/api/jobs/:jobId/status", verifyToken, async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const { isActive } = req.body;
+
+    // Check if user owns the job
+    const jobCheck = await pool.query(
+      "SELECT posted_by FROM jobs WHERE id = $1",
+      [jobId]
+    );
+
+    if (jobCheck.rows.length === 0) {
+      return res.status(404).json({ message: "Job not found" });
+    }
+
+    if (jobCheck.rows[0].posted_by !== req.userId) {
+      return res.status(403).json({ message: "You can only update your own job postings" });
+    }
+
+    await pool.query(
+      "UPDATE jobs SET is_active = $1, updated_at = NOW() WHERE id = $2",
+      [isActive, jobId]
+    );
+
+    console.log("✅ Job status updated:", jobId, "active:", isActive);
+    res.json({ message: "Job status updated successfully" });
+
+  } catch (err) {
+    console.error("❌ Update job status error:", err);
+    res.status(500).json({ message: "Failed to update job status" });
+  }
+});
+
+// GET JOB APPLICATIONS (for job poster)
+app.get("/api/jobs/:jobId/applications", verifyToken, async (req, res) => {
+  try {
+    const { jobId } = req.params;
+
+    // Check if user owns the job
+    const jobCheck = await pool.query(
+      "SELECT posted_by FROM jobs WHERE id = $1",
+      [jobId]
+    );
+
+    if (jobCheck.rows.length === 0) {
+      return res.status(404).json({ message: "Job not found" });
+    }
+
+    if (jobCheck.rows[0].posted_by !== req.userId) {
+      return res.status(403).json({ message: "You can only view applications for your own jobs" });
+    }
+
+    const result = await pool.query(
+      `SELECT 
+        ja.*,
+        u.first_name,
+        u.last_name,
+        u.email,
+        u.headline
+      FROM job_applications ja
+      JOIN users u ON ja.applicant_id = u.id
+      WHERE ja.job_id = $1
+      ORDER BY ja.created_at DESC`,
+      [jobId]
+    );
+
+    res.json({ applications: result.rows });
+
+  } catch (err) {
+    console.error("❌ Get applications error:", err);
+    res.status(500).json({ message: "Failed to fetch applications" });
+  }
+});
+// ==========================================
 //               EVENTS
 // ==========================================
 
@@ -564,6 +707,7 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
 
 
 
