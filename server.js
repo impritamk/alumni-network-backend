@@ -458,8 +458,12 @@ app.get("/api/jobs", verifyToken, async (req, res) => {
 });
 
 // CREATE JOB
+// CREATE JOB
 app.post("/api/jobs", verifyToken, async (req, res) => {
   try {
+    console.log("📝 Creating job with data:", req.body);
+    console.log("👤 Posted by user ID:", req.userId);
+    
     const {
       title,
       company,
@@ -470,6 +474,14 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
       jobType,
       experienceLevel,
     } = req.body;
+
+    // Validate required fields
+    if (!title || !company || !description) {
+      console.log("❌ Missing required fields");
+      return res.status(400).json({ 
+        message: "Title, company, and description are required" 
+      });
+    }
 
     const q = await pool.query(
       `INSERT INTO jobs (
@@ -483,22 +495,26 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
         title,
         company,
         description,
-        requirements,
-        location,
-        salaryRange,
-        jobType,
-        experienceLevel,
+        requirements || null,
+        location || null,
+        salaryRange || null,
+        jobType || null,
+        experienceLevel || null,
       ]
     );
 
+    console.log("✅ Job created successfully:", q.rows[0].id);
     res.status(201).json({ job: q.rows[0] });
 
   } catch (err) {
-    console.error("Create job error:", err);
-    res.status(500).json({ message: "Failed to create job" });
+    console.error("❌ Create job error:", err);
+    console.error("Error details:", err.message);
+    res.status(500).json({ 
+      message: "Failed to create job",
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
   }
 });
-
 // ==========================================
 //               EVENTS
 // ==========================================
@@ -537,6 +553,7 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
 
 
 
