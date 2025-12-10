@@ -458,7 +458,6 @@ app.get("/api/jobs", verifyToken, async (req, res) => {
 });
 
 // CREATE JOB
-// CREATE JOB
 app.post("/api/jobs", verifyToken, async (req, res) => {
   try {
     console.log("📝 Creating job with data:", req.body);
@@ -483,12 +482,28 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
       });
     }
 
+    // First, verify the jobs table exists
+    const tableCheck = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_name = 'jobs'
+      );
+    `);
+    
+    if (!tableCheck.rows[0].exists) {
+      console.error("❌ Jobs table does not exist!");
+      return res.status(500).json({ 
+        message: "Database not properly configured. Jobs table missing." 
+      });
+    }
+
+    // Try to insert
     const q = await pool.query(
       `INSERT INTO jobs (
          posted_by, title, company, description, requirements,
-         location, salary_range, job_type, experience_level
+         location, salary_range, job_type, experience_level, created_at
        )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, NOW())
        RETURNING *`,
       [
         req.userId,
@@ -509,9 +524,13 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
   } catch (err) {
     console.error("❌ Create job error:", err);
     console.error("Error details:", err.message);
+    console.error("Error stack:", err.stack);
+    
+    // Return detailed error in development
     res.status(500).json({ 
       message: "Failed to create job",
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+      error: err.message,
+      detail: err.detail || "No additional details"
     });
   }
 });
@@ -553,6 +572,7 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
 
 
 
