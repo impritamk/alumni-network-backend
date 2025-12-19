@@ -1,6 +1,5 @@
 // ==========================================
-//  ALUMNI NETWORK BACKEND (CLEAN VERSION)
-//  OTP EMAIL VERIFICATION + JOBS + EVENTS
+//  ALUMNI NETWORK BACKEND (FIXED VERSION)
 // ==========================================
 
 const express = require("express");
@@ -10,12 +9,11 @@ const rateLimit = require("express-rate-limit");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const nodemailer = require("nodemailer");
+const axios = require("axios");
 require("dotenv").config();
 
 const app = express();
 
-// Railway/Heroku require trust proxy for correct IP + rate-limit
 app.set("trust proxy", 1);
 
 // --------------------------
@@ -27,15 +25,13 @@ const pool = new Pool({
 });
 
 pool.query("SELECT NOW()", (err) => {
-  if (err) console.error("Database connection error:", err);
-  else console.log("Database connected successfully");
+  if (err) console.error("❌ Database connection error:", err);
+  else console.log("✅ Database connected successfully");
 });
 
 // --------------------------
-// EMAIL TRANSPORT (BREVO SMTP)
+// EMAIL FUNCTION
 // --------------------------
-const axios = require("axios");
-
 async function sendOtpEmail(email, otp) {
   try {
     await axios.post(
@@ -54,13 +50,11 @@ async function sendOtpEmail(email, otp) {
         }
       }
     );
-
-    console.log("OTP email sent using Brevo API");
+    console.log("✅ OTP email sent to:", email);
   } catch (err) {
-    console.error("OTP Email Error:", err.response?.data || err.message);
+    console.error("❌ OTP Email Error:", err.response?.data || err.message);
   }
 }
-
 
 // --------------------------
 // MIDDLEWARE
@@ -70,7 +64,6 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Rate Limiter (100 requests / 15 min)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -78,7 +71,7 @@ const limiter = rateLimit({
 app.use("/api/", limiter);
 
 // --------------------------
-// UTILS - OTP GENERATOR
+// UTILS
 // --------------------------
 function generateOtpAndExpiry(minutes = 10) {
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -116,9 +109,6 @@ app.get("/api/health", (req, res) => {
 //                AUTH ROUTES
 // ==========================================
 
-// --------------------------
-// REGISTER → Send OTP (FIXED VERSION)
-// --------------------------
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { email, password, firstName, lastName, passoutYear } = req.body;
@@ -147,23 +137,16 @@ app.post("/api/auth/register", async (req, res) => {
       [email, hashedPassword, firstName, lastName, passoutYear, otp, expiry]
     );
 
-    // 👉 SEND OTP USING BREVO API
     await sendOtpEmail(email, otp);
-
-    console.log("OTP issued:", otp);
+    console.log("📧 OTP issued:", otp);
 
     res.json({ message: "OTP sent to email", email });
-
   } catch (err) {
-    console.error("Registration error:", err);
+    console.error("❌ Registration error:", err);
     res.status(500).json({ message: "Registration failed" });
   }
 });
 
-
-// --------------------------
-// VERIFY OTP
-// --------------------------
 app.post("/api/auth/verify-otp", async (req, res) => {
   try {
     const { email, otp } = req.body;
@@ -192,54 +175,12 @@ app.post("/api/auth/verify-otp", async (req, res) => {
     );
 
     res.json({ message: "Email verified successfully" });
-
   } catch (err) {
-    console.error("Verify OTP error:", err);
+    console.error("❌ Verify OTP error:", err);
     res.status(500).json({ message: "OTP verification failed" });
   }
 });
 
-// --------------------------
-// RESEND OTP
-// --------------------------
-app.post("/api/auth/resend-otp", async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    const q = await pool.query("SELECT id FROM users WHERE email = $1", [
-      email,
-    ]);
-
-    if (q.rows.length === 0)
-      return res.status(400).json({ message: "User not found" });
-
-    const { otp, expiry } = generateOtpAndExpiry();
-
-    await pool.query(
-      "UPDATE users SET otp = $1, otp_expires = $2, verification_status = 'pending' WHERE email = $3",
-      [otp, expiry, email]
-    );
-
-    await transporter.sendMail({
-      from: process.env.FROM_EMAIL,
-      to: email,
-      subject: "Your New OTP",
-      html: `<h2>Your new OTP is: <strong>${otp}</strong></h2>`,
-    });
-
-    console.log("Resent OTP:", otp);
-
-    res.json({ message: "OTP resent" });
-
-  } catch (err) {
-    console.error("Resend OTP error:", err);
-    res.status(500).json({ message: "Failed to resend OTP" });
-  }
-});
-
-// --------------------------
-// LOGIN (requires verified email)
-// --------------------------
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -271,24 +212,23 @@ app.post("/api/auth/login", async (req, res) => {
     );
 
     delete user.password;
-
     res.json({ token, user });
-
   } catch (err) {
-    console.error("Login error:", err);
+    console.error("❌ Login error:", err);
     res.status(500).json({ message: "Login failed" });
   }
 });
 
 // ==========================================
-//          USER + DIRECTORY + PROFILE
+//          USER ROUTES (FIXED)
 // ==========================================
 
-// GET CURRENT USER
 app.get("/api/auth/me", verifyToken, async (req, res) => {
   try {
     const q = await pool.query(
-      "SELECT id, email, first_name, last_name, headline, bio, role FROM users WHERE id = $1",
+      `SELECT id, email, first_name, last_name, headline, bio, role, 
+              location, current_company as company, passout_year
+       FROM users WHERE id = $1`,
       [req.userId]
     );
 
@@ -296,20 +236,19 @@ app.get("/api/auth/me", verifyToken, async (req, res) => {
       return res.status(404).json({ message: "User not found" });
 
     res.json({ user: q.rows[0] });
-
   } catch (err) {
-    console.error("Me error:", err);
+    console.error("❌ Me error:", err);
     res.status(500).json({ message: "Failed to fetch user" });
   }
 });
 
-// DIRECTORY LISTING
 app.get("/api/users/directory", verifyToken, async (req, res) => {
   try {
     const { search, passoutYear, limit = 20, offset = 0 } = req.query;
 
     let query = `
-      SELECT id, first_name, last_name, email, headline, bio, passout_year
+      SELECT id, first_name, last_name, email, headline, bio, passout_year,
+             location, current_company as company
       FROM users WHERE verification_status = 'verified'
     `;
 
@@ -332,79 +271,21 @@ app.get("/api/users/directory", verifyToken, async (req, res) => {
     params.push(limit, offset);
 
     const result = await pool.query(query, params);
-
     res.json({ users: result.rows });
-
   } catch (err) {
-    console.error("Directory error:", err);
+    console.error("❌ Directory error:", err);
     res.status(500).json({ message: "Failed to fetch directory" });
   }
 });
 
-// UPDATE PROFILE
-app.put("/api/users/profile", verifyToken, async (req, res) => {
-  try {
-    const {
-      firstName,
-      lastName,
-      headline,
-      bio,
-      skills,
-      currentCompany,
-      currentPosition,
-      location,
-      website,
-      linkedin,
-      github,
-    } = req.body;
-
-    const q = await pool.query(
-      `UPDATE users SET
-         first_name = COALESCE($1, first_name),
-         last_name = COALESCE($2, last_name),
-         headline = COALESCE($3, headline),
-         bio = COALESCE($4, bio),
-         skills = COALESCE($5, skills),
-         current_company = COALESCE($6, current_company),
-         current_position = COALESCE($7, current_position),
-         location = COALESCE($8, location),
-         website = COALESCE($9, website),
-         linkedin = COALESCE($10, linkedin),
-         github = COALESCE($11, github),
-         updated_at = NOW()
-       WHERE id = $12
-       RETURNING id, email, first_name, last_name, headline, bio`,
-      [
-        firstName,
-        lastName,
-        headline,
-        bio,
-        skills,
-        currentCompany,
-        currentPosition,
-        location,
-        website,
-        linkedin,
-        github,
-        req.userId,
-      ]
-    );
-
-    res.json({ user: q.rows[0] });
-
-  } catch (err) {
-    console.error("Profile update error:", err);
-    res.status(500).json({ message: "Failed to update profile" });
-  }
-});
-// GET SINGLE USER PROFILE BY ID
+// 🆕 FIXED: Get single user by ID
 app.get("/api/users/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
 
     const q = await pool.query(
       `SELECT id, first_name, last_name, email, headline, bio, 
-              passout_year, skills, current_company, current_position, 
+              passout_year, skills, current_company as company, current_position, 
               location, website, linkedin, github
        FROM users 
        WHERE id = $1 AND verification_status = 'verified'`,
@@ -416,33 +297,52 @@ app.get("/api/users/:id", verifyToken, async (req, res) => {
     }
 
     res.json({ user: q.rows[0] });
-
   } catch (err) {
-    console.error("Get user error:", err);
+    console.error("❌ Get user error:", err);
     res.status(500).json({ message: "Failed to fetch user" });
   }
 });
 
+// 🆕 FIXED: Update profile with correct field mapping
+app.put("/api/users/profile", verifyToken, async (req, res) => {
+  try {
+    const { headline, bio, location, company } = req.body;
 
-// DIRECTORY LISTING
-app.get("/api/users/directory", verifyToken, async (req, res) => {
-  // ... existing code
+    console.log("📝 Updating profile for user:", req.userId);
+    console.log("Data received:", { headline, bio, location, company });
+
+    const q = await pool.query(
+      `UPDATE users SET
+         headline = COALESCE($1, headline),
+         bio = COALESCE($2, bio),
+         location = COALESCE($3, location),
+         current_company = COALESCE($4, current_company),
+         updated_at = NOW()
+       WHERE id = $5
+       RETURNING id, email, first_name, last_name, headline, bio, location, 
+                 current_company as company`,
+      [headline, bio, location, company, req.userId]
+    );
+
+    console.log("✅ Profile updated successfully");
+    res.json({ user: q.rows[0] });
+  } catch (err) {
+    console.error("❌ Profile update error:", err);
+    res.status(500).json({ message: "Failed to update profile" });
+  }
 });
 
-// 👇 ADD THE NEW ENDPOINT HERE
-app.get("/api/users/:id", verifyToken, async (req, res) => {
-  // ... new code above
-});
 // ==========================================
-//                JOBS
+//          JOBS ROUTES (FIXED)
 // ==========================================
 
-// GET JOBS - UPDATED
 app.get("/api/jobs", verifyToken, async (req, res) => {
   try {
     const q = await pool.query(
       `SELECT 
-        j.*,
+        j.id, j.title, j.company, j.description, j.requirements,
+        j.location, j.salary_range, j.job_type, j.experience_level,
+        j.is_active, j.created_at, j.expires_at,
         u.first_name,
         u.last_name,
         COUNT(ja.id) as application_count
@@ -457,18 +357,16 @@ app.get("/api/jobs", verifyToken, async (req, res) => {
     );
 
     res.json({ jobs: q.rows });
-
   } catch (err) {
-    console.error("Get jobs error:", err);
+    console.error("❌ Get jobs error:", err);
     res.status(500).json({ message: "Failed to fetch jobs" });
   }
 });
 
-// CREATE JOB - UPDATE THIS SECTION
+// 🆕 FIXED: Create job with proper field mapping
 app.post("/api/jobs", verifyToken, async (req, res) => {
   try {
-    console.log("📝 Received job post request");
-    console.log("User ID:", req.userId);
+    console.log("📝 Creating job, user:", req.userId);
     console.log("Request body:", req.body);
     
     const {
@@ -480,25 +378,22 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
       salaryRange,
       jobType,
       experienceLevel,
-      expiresAt  // ADD THIS LINE
+      expiresAt
     } = req.body;
 
-    // Validate required fields
     if (!title || !company || !description) {
-      console.log("❌ Validation failed - missing required fields");
       return res.status(400).json({ 
         message: "Title, company, and description are required" 
       });
     }
 
-    console.log("✅ Validation passed, inserting into database...");
-
     const q = await pool.query(
       `INSERT INTO jobs (
          posted_by, title, company, description, requirements,
-         location, salary_range, job_type, experience_level, expires_at, is_active, created_at
+         location, salary_range, job_type, experience_level, expires_at, 
+         is_active, created_at
        )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, NOW())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,NOW())
        RETURNING *`,
       [
         req.userId,
@@ -510,41 +405,33 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
         salaryRange || null,
         jobType || null,
         experienceLevel || null,
-        expiresAt || null,  // ADD THIS LINE
-        true
+        expiresAt || null
       ]
     );
 
     console.log("✅ Job created with ID:", q.rows[0].id);
-    res.status(201).json({ job: q.rows[0], message: "Job posted successfully" });
-
+    res.status(201).json({ 
+      job: q.rows[0], 
+      message: "Job posted successfully" 
+    });
   } catch (err) {
-    console.error("❌ CREATE JOB ERROR:");
-    console.error("Error message:", err.message);
-    console.error("Error code:", err.code);
-    console.error("Error detail:", err.detail);
-    
+    console.error("❌ CREATE JOB ERROR:", err);
     res.status(500).json({ 
       message: "Failed to create job",
-      error: err.message,
-      code: err.code,
-      detail: err.detail
+      error: err.message
     });
   }
 });
+
 // ==========================================
-//         JOB APPLICATION ROUTES
+//         JOB APPLICATIONS
 // ==========================================
 
-// APPLY TO A JOB
 app.post("/api/jobs/:jobId/apply", verifyToken, async (req, res) => {
   try {
     const { jobId } = req.params;
     const { coverLetter, resume, phone, linkedinUrl } = req.body;
-    
-    console.log("📝 Job application from user:", req.userId, "for job:", jobId);
 
-    // Check if already applied
     const existing = await pool.query(
       "SELECT id FROM job_applications WHERE job_id = $1 AND applicant_id = $2",
       [jobId, req.userId]
@@ -554,26 +441,6 @@ app.post("/api/jobs/:jobId/apply", verifyToken, async (req, res) => {
       return res.status(409).json({ message: "You have already applied to this job" });
     }
 
-    // Check if job is still active
-    const jobCheck = await pool.query(
-      "SELECT is_active, expires_at FROM jobs WHERE id = $1",
-      [jobId]
-    );
-
-    if (jobCheck.rows.length === 0) {
-      return res.status(404).json({ message: "Job not found" });
-    }
-
-    const job = jobCheck.rows[0];
-    if (!job.is_active) {
-      return res.status(400).json({ message: "This job is no longer accepting applications" });
-    }
-
-    if (job.expires_at && new Date(job.expires_at) < new Date()) {
-      return res.status(400).json({ message: "This job posting has expired" });
-    }
-
-    // Create application
     const result = await pool.query(
       `INSERT INTO job_applications (
         job_id, applicant_id, cover_letter, resume_url, phone, linkedin_url, created_at
@@ -587,53 +454,16 @@ app.post("/api/jobs/:jobId/apply", verifyToken, async (req, res) => {
       application: result.rows[0],
       message: "Application submitted successfully" 
     });
-
   } catch (err) {
     console.error("❌ Apply job error:", err);
     res.status(500).json({ message: "Failed to submit application" });
   }
 });
 
-// UPDATE JOB STATUS (mark as closed)
-app.put("/api/jobs/:jobId/status", verifyToken, async (req, res) => {
-  try {
-    const { jobId } = req.params;
-    const { isActive } = req.body;
-
-    // Check if user owns the job
-    const jobCheck = await pool.query(
-      "SELECT posted_by FROM jobs WHERE id = $1",
-      [jobId]
-    );
-
-    if (jobCheck.rows.length === 0) {
-      return res.status(404).json({ message: "Job not found" });
-    }
-
-    if (jobCheck.rows[0].posted_by !== req.userId) {
-      return res.status(403).json({ message: "You can only update your own job postings" });
-    }
-
-    await pool.query(
-      "UPDATE jobs SET is_active = $1, updated_at = NOW() WHERE id = $2",
-      [isActive, jobId]
-    );
-
-    console.log("✅ Job status updated:", jobId, "active:", isActive);
-    res.json({ message: "Job status updated successfully" });
-
-  } catch (err) {
-    console.error("❌ Update job status error:", err);
-    res.status(500).json({ message: "Failed to update job status" });
-  }
-});
-
-// GET JOB APPLICATIONS (for job poster)
 app.get("/api/jobs/:jobId/applications", verifyToken, async (req, res) => {
   try {
     const { jobId } = req.params;
 
-    // Check if user owns the job
     const jobCheck = await pool.query(
       "SELECT posted_by FROM jobs WHERE id = $1",
       [jobId]
@@ -662,17 +492,16 @@ app.get("/api/jobs/:jobId/applications", verifyToken, async (req, res) => {
     );
 
     res.json({ applications: result.rows });
-
   } catch (err) {
     console.error("❌ Get applications error:", err);
     res.status(500).json({ message: "Failed to fetch applications" });
   }
 });
+
 // ==========================================
 //               EVENTS
 // ==========================================
 
-// GET UPCOMING EVENTS
 app.get("/api/events", verifyToken, async (req, res) => {
   try {
     const q = await pool.query(
@@ -686,9 +515,8 @@ app.get("/api/events", verifyToken, async (req, res) => {
     );
 
     res.json({ events: q.rows });
-
   } catch (err) {
-    console.error("Events error:", err);
+    console.error("❌ Events error:", err);
     res.status(500).json({ message: "Failed to fetch events" });
   }
 });
@@ -697,7 +525,7 @@ app.get("/api/events", verifyToken, async (req, res) => {
 // ERROR HANDLER
 // ==========================================
 app.use((err, req, res, next) => {
-  console.error("Unhandled Error:", err);
+  console.error("❌ Unhandled Error:", err);
   res.status(500).json({ message: "Server error" });
 });
 
@@ -705,13 +533,4 @@ app.use((err, req, res, next) => {
 // START SERVER
 // ==========================================
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-
-
-
-
-
-
-
-
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
