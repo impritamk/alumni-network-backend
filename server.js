@@ -1,5 +1,5 @@
 // ==========================================
-//  ALUMNI NETWORK BACKEND (FIXED VERSION)
+//  ALUMNI NETWORK BACKEND (FINAL VERSION)
 // ==========================================
 
 const express = require("express");
@@ -125,6 +125,7 @@ async function sendOtpEmail(email, otp) {
     console.error("❌ OTP Email Error:", err.response?.data || err.message);
   }
 }
+
 // --------------------------
 // AUTH MIDDLEWARE
 // --------------------------
@@ -296,6 +297,149 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
+// ✅ FORGOT PASSWORD ENDPOINT
+app.post("/api/auth/forgot-password", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const q = await pool.query(
+      "SELECT id FROM users WHERE email = $1",
+      [email]
+    );
+
+    if (q.rows.length === 0) {
+      return res.status(404).json({ message: "Email not found" });
+    }
+
+    const userId = q.rows[0].id;
+    const resetToken = jwt.sign(
+      { userId, type: "reset" },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    // Store reset token in database
+    await pool.query(
+      "UPDATE users SET reset_token = $1, reset_token_expires = NOW() + INTERVAL '1 hour' WHERE id = $2",
+      [resetToken, userId]
+    );
+
+    // Send reset email
+    const resetLink = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
+    
+    await axios.post(
+      "https://api.brevo.com/v3/smtp/email",
+      {
+        sender: { email: process.env.FROM_EMAIL, name: "Alumni Network" },
+        to: [{ email }],
+        subject: "🔐 Reset Your Password - Alumni Network",
+        htmlContent: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; background: #f9fafb; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; background: white; border-radius: 8px; }
+              .header { background: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+              .content { padding: 20px; }
+              .button { background: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; margin: 20px 0; }
+              .footer { text-align: center; padding: 20px; color: #6b7280; font-size: 12px; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>🎓 Alumni Network</h1>
+              </div>
+              <div class="content">
+                <p>Hello,</p>
+                <p>We received a request to reset your password. Click the button below to set a new password:</p>
+                
+                <div style="text-align: center;">
+                  <a href="${resetLink}" class="button">Reset Password</a>
+                </div>
+                
+                <p style="color: #6b7280; font-size: 14px;">
+                  This link expires in 1 hour.
+                </p>
+                
+                <p>If you didn't request this, please ignore this email.</p>
+                
+                <p>Best regards,<br><strong>Alumni Network Team</strong></p>
+              </div>
+              <div class="footer">
+                <p>&copy; 2024 Alumni Network. All rights reserved.</p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `
+      },
+      {
+        headers: {
+          "accept": "application/json",
+          "api-key": process.env.BREVO_API_KEY,
+          "content-type": "application/json"
+        }
+      }
+    );
+
+    console.log("✅ Password reset link sent to:", email);
+    res.json({ message: "Password reset link sent to your email" });
+  } catch (err) {
+    console.error("❌ Forgot password error:", err);
+    res.status(500).json({ message: "Failed to send reset link" });
+  }
+});
+
+// ✅ RESET PASSWORD ENDPOINT
+app.post("/api/auth/reset-password", async (req, res) => {
+  try {
+    const { token, password } = req.body;
+
+    if (!token || !password) {
+      return res.status(400).json({ message: "Token and password are required" });
+    }
+
+    // Verify token
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (err) {
+      return res.status(400).json({ message: "Invalid or expired reset token" });
+    }
+
+    // Check if reset token matches in database
+    const q = await pool.query(
+      "SELECT id, reset_token_expires FROM users WHERE id = $1 AND reset_token = $2",
+      [decoded.userId, token]
+    );
+
+    if (q.rows.length === 0) {
+      return res.status(400).json({ message: "Invalid reset token" });
+    }
+
+    if (new Date(q.rows[0].reset_token_expires) < new Date()) {
+      return res.status(400).json({ message: "Reset token has expired" });
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(password, 12);
+
+    // Update password and clear reset token
+    await pool.query(
+      "UPDATE users SET password = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2",
+      [hashedPassword, decoded.userId]
+    );
+
+    console.log("✅ Password reset successful for user:", decoded.userId);
+    res.json({ message: "Password reset successfully" });
+  } catch (err) {
+    console.error("❌ Reset password error:", err);
+    res.status(500).json({ message: "Failed to reset password" });
+  }
+});
+
 // ==========================================
 //          USER ROUTES (FIXED)
 // ==========================================
@@ -437,6 +581,7 @@ app.delete("/api/users/account", verifyToken, async (req, res) => {
     res.status(500).json({ message: "Failed to delete account" });
   }
 });
+
 // ==========================================
 //          JOBS ROUTES (FIXED)
 // ==========================================
@@ -532,7 +677,6 @@ app.delete("/api/jobs/:jobId", verifyToken, async (req, res) => {
   try {
     const { jobId } = req.params;
 
-    // Check if job exists and user is the one who posted it
     const jobCheck = await pool.query(
       "SELECT posted_by FROM jobs WHERE id = $1",
       [jobId]
@@ -546,7 +690,6 @@ app.delete("/api/jobs/:jobId", verifyToken, async (req, res) => {
       return res.status(403).json({ message: "You can only delete jobs you posted" });
     }
 
-    // Delete the job
     await pool.query("DELETE FROM jobs WHERE id = $1", [jobId]);
 
     console.log("✅ Job deleted:", jobId);
@@ -668,8 +811,3 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-
-
-
-
-
