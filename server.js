@@ -81,7 +81,7 @@ async function sendOtpEmail(email, otp) {
               .header { background: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
               .content { padding: 20px; }
               .otp-box { background: #f3f4f6; padding: 20px; text-align: center; margin: 20px 0; border: 2px solid #2563eb; border-radius: 8px; }
-              .otp-code { font-size: 48px; font-weight: bold; color: #2563eb; letter-spacing: 8px; font-family: monospace; }
+              .otp-code { font-size: 30px; font-weight: bold; color: #2563eb; letter-spacing: 8px; font-family: monospace; }
               .footer { text-align: center; padding: 20px; color: #6b7280; font-size: 12px; }
             </style>
           </head>
@@ -608,4 +608,5 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
 
