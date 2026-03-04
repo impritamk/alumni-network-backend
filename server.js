@@ -71,10 +71,46 @@ async function sendOtpEmail(email, otp) {
         sender: { email: process.env.FROM_EMAIL, name: "Alumni Network" },
         to: [{ email }],
         subject: "🎓 Verify Your Email - Alumni Network",
-        templateId: 1,
-        params: {
-          OTP: otp
-        }
+        htmlContent: `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; background: #f9fafb; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; background: white; border-radius: 8px; }
+              .header { background: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+              .content { padding: 20px; }
+              .otp-box { background: #f3f4f6; padding: 20px; text-align: center; margin: 20px 0; border: 2px solid #2563eb; border-radius: 8px; }
+              .otp-code { font-size: 48px; font-weight: bold; color: #2563eb; letter-spacing: 8px; font-family: monospace; }
+              .footer { text-align: center; padding: 20px; color: #6b7280; font-size: 12px; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>🎓 Alumni Network</h1>
+              </div>
+              <div class="content">
+                <p>Hello,</p>
+                <p>You're almost there! Use the OTP below to verify your email address:</p>
+                
+                <div class="otp-box">
+                  <p style="margin: 0 0 10px 0; color: #6b7280;">Your verification code:</p>
+                  <div class="otp-code">${otp}</div>
+                  <p style="margin: 10px 0 0 0; color: #6b7280; font-size: 14px;">Valid for 10 minutes</p>
+                </div>
+                
+                <p>If you didn't request this, please ignore this email.</p>
+                
+                <p>Best regards,<br><strong>Alumni Network Team</strong></p>
+              </div>
+              <div class="footer">
+                <p>&copy; 2024 Alumni Network. All rights reserved.</p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `
       },
       {
         headers: {
@@ -89,7 +125,6 @@ async function sendOtpEmail(email, otp) {
     console.error("❌ OTP Email Error:", err.response?.data || err.message);
   }
 }
-
 // --------------------------
 // AUTH MIDDLEWARE
 // --------------------------
@@ -573,3 +608,4 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
