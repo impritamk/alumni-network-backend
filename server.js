@@ -30,63 +30,18 @@ pool.query("SELECT NOW()", (err) => {
 });
 
 // --------------------------
-// EMAIL FUNCTION
-// --------------------------
-async function sendOtpEmail(email, otp) {
-  try {
-    await axios.post(
-      "https://api.brevo.com/v3/smtp/email",
-      {
-        sender: { email: process.env.FROM_EMAIL, name: "Alumni Network" },
-        to: [{ email }],
-        subject: "🎓 Verify Your Email - Alumni Network",
-        templateId: 1,  // ← REPLACE 1 WITH YOUR ACTUAL TEMPLATE ID
-        params: {
-          OTP: otp
-        }
-      },
-      {
-        headers: {
-          "accept": "application/json",
-          "api-key": process.env.BREVO_API_KEY,
-          "content-type": "application/json"
-        }
-      }
-    );
-    console.log("✅ OTP email sent to:", email);
-  } catch (err) {
-    console.error("❌ OTP Email Error:", err.response?.data || err.message);
-  }
-}
-
-app.post("/api/auth/resend-otp", async (req, res) => {
-  try {
-    const { email } = req.body;
-    const q = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
-      [email]
-    );
-    if (q.rows.length === 0) {
-      return res.status(404).json({ message: "User not found" });
-    }
-    const { otp, expiry } = generateOtpAndExpiry();
-    await pool.query(
-      "UPDATE users SET otp = $1, otp_expires = $2 WHERE email = $3",
-      [otp, expiry, email]
-    );
-    await sendOtpEmail(email, otp);
-    console.log("📧 OTP resent:", otp);
-    res.json({ message: "OTP sent to email" });
-  } catch (err) {
-    console.error("❌ Resend OTP error:", err);
-    res.status(500).json({ message: "Failed to resend OTP" });
-  }
-});
-// --------------------------
-// MIDDLEWARE
+// MIDDLEWARE (MUST BE BEFORE ROUTES)
 // --------------------------
 app.use(helmet());
-app.use(cors());
+
+// ✅ FIXED CORS CONFIGURATION
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -103,6 +58,36 @@ function generateOtpAndExpiry(minutes = 10) {
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   const expiry = new Date(Date.now() + minutes * 60000);
   return { otp, expiry };
+}
+
+// --------------------------
+// EMAIL FUNCTION
+// --------------------------
+async function sendOtpEmail(email, otp) {
+  try {
+    await axios.post(
+      "https://api.brevo.com/v3/smtp/email",
+      {
+        sender: { email: process.env.FROM_EMAIL, name: "Alumni Network" },
+        to: [{ email }],
+        subject: "🎓 Verify Your Email - Alumni Network",
+        templateId: 1,
+        params: {
+          OTP: otp
+        }
+      },
+      {
+        headers: {
+          "accept": "application/json",
+          "api-key": process.env.BREVO_API_KEY,
+          "content-type": "application/json"
+        }
+      }
+    );
+    console.log("✅ OTP email sent to:", email);
+  } catch (err) {
+    console.error("❌ OTP Email Error:", err.response?.data || err.message);
+  }
 }
 
 // --------------------------
@@ -207,6 +192,37 @@ app.post("/api/auth/verify-otp", async (req, res) => {
   }
 });
 
+// ✅ RESEND OTP ENDPOINT
+app.post("/api/auth/resend-otp", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const q = await pool.query(
+      "SELECT id FROM users WHERE email = $1",
+      [email]
+    );
+
+    if (q.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const { otp, expiry } = generateOtpAndExpiry();
+
+    await pool.query(
+      "UPDATE users SET otp = $1, otp_expires = $2 WHERE email = $3",
+      [otp, expiry, email]
+    );
+
+    await sendOtpEmail(email, otp);
+    console.log("📧 OTP resent:", otp);
+
+    res.json({ message: "OTP sent to email" });
+  } catch (err) {
+    console.error("❌ Resend OTP error:", err);
+    res.status(500).json({ message: "Failed to resend OTP" });
+  }
+});
+
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -304,7 +320,6 @@ app.get("/api/users/directory", verifyToken, async (req, res) => {
   }
 });
 
-// 🆕 FIXED: Get single user by ID
 app.get("/api/users/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -329,7 +344,6 @@ app.get("/api/users/:id", verifyToken, async (req, res) => {
   }
 });
 
-// 🆕 FIXED: Update profile with correct field mapping
 app.put("/api/users/profile", verifyToken, async (req, res) => {
   try {
     const { headline, bio, location, company } = req.body;
@@ -389,7 +403,6 @@ app.get("/api/jobs", verifyToken, async (req, res) => {
   }
 });
 
-// 🆕 FIXED: Create job with proper field mapping
 app.post("/api/jobs", verifyToken, async (req, res) => {
   try {
     console.log("📝 Creating job, user:", req.userId);
@@ -560,5 +573,3 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-
-
