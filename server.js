@@ -417,7 +417,7 @@ app.get("/api/jobs", verifyToken, async (req, res) => {
       `SELECT 
         j.id, j.title, j.company, j.description, j.requirements,
         j.location, j.salary_range, j.job_type, j.experience_level,
-        j.is_active, j.created_at, j.expires_at,
+        j.is_active, j.created_at, j.expires_at, j.posted_by,
         u.first_name,
         u.last_name,
         COUNT(ja.id) as application_count
@@ -638,6 +638,7 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
 
 
 
