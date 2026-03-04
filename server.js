@@ -407,6 +407,36 @@ app.put("/api/users/profile", verifyToken, async (req, res) => {
   }
 });
 
+// DELETE ACCOUNT (user deletes their own account)
+app.delete("/api/users/account", verifyToken, async (req, res) => {
+  try {
+    const userId = req.userId;
+
+    // Delete all job applications from this user
+    await pool.query(
+      "DELETE FROM job_applications WHERE applicant_id = $1",
+      [userId]
+    );
+
+    // Delete all jobs posted by this user
+    await pool.query(
+      "DELETE FROM jobs WHERE posted_by = $1",
+      [userId]
+    );
+
+    // Delete the user account
+    await pool.query(
+      "DELETE FROM users WHERE id = $1",
+      [userId]
+    );
+
+    console.log("✅ Account deleted:", userId);
+    res.json({ message: "Account deleted successfully" });
+  } catch (err) {
+    console.error("❌ Delete account error:", err);
+    res.status(500).json({ message: "Failed to delete account" });
+  }
+});
 // ==========================================
 //          JOBS ROUTES (FIXED)
 // ==========================================
@@ -638,6 +668,7 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
 
 
 
