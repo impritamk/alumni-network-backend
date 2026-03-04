@@ -55,6 +55,35 @@ async function sendOtpEmail(email, otp) {
     console.error("❌ OTP Email Error:", err.response?.data || err.message);
   }
 }
+app.post("/api/auth/resend-otp", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const q = await pool.query(
+      "SELECT id FROM users WHERE email = $1",
+      [email]
+    );
+
+    if (q.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const { otp, expiry } = generateOtpAndExpiry();
+
+    await pool.query(
+      "UPDATE users SET otp = $1, otp_expires = $2 WHERE email = $3",
+      [otp, expiry, email]
+    );
+
+    await sendOtpEmail(email, otp);
+    console.log("📧 OTP resent:", otp);
+
+    res.json({ message: "OTP sent to email" });
+  } catch (err) {
+    console.error("❌ Resend OTP error:", err);
+    res.status(500).json({ message: "Failed to resend OTP" });
+  }
+});
 
 // --------------------------
 // MIDDLEWARE
@@ -534,3 +563,4 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
