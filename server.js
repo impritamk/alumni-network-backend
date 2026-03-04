@@ -497,6 +497,36 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
   }
 });
 
+// DELETE JOB (only by who posted it)
+app.delete("/api/jobs/:jobId", verifyToken, async (req, res) => {
+  try {
+    const { jobId } = req.params;
+
+    // Check if job exists and user is the one who posted it
+    const jobCheck = await pool.query(
+      "SELECT posted_by FROM jobs WHERE id = $1",
+      [jobId]
+    );
+
+    if (jobCheck.rows.length === 0) {
+      return res.status(404).json({ message: "Job not found" });
+    }
+
+    if (jobCheck.rows[0].posted_by !== req.userId) {
+      return res.status(403).json({ message: "You can only delete jobs you posted" });
+    }
+
+    // Delete the job
+    await pool.query("DELETE FROM jobs WHERE id = $1", [jobId]);
+
+    console.log("✅ Job deleted:", jobId);
+    res.json({ message: "Job deleted successfully" });
+  } catch (err) {
+    console.error("❌ Delete job error:", err);
+    res.status(500).json({ message: "Failed to delete job" });
+  }
+});
+
 // ==========================================
 //         JOB APPLICATIONS
 // ==========================================
@@ -608,5 +638,6 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
 
 
