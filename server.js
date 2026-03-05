@@ -709,12 +709,20 @@ app.post("/api/jobs/:jobId/apply", verifyToken, async (req, res) => {
       return res.status(409).json({ message: "You have already applied to this job" });
     }
 
+    // 🟢 NEW FEATURE: DB Compatibility Workaround
+    // The DB schema doesn't have columns for phone or LinkedIn, so we safely attach them 
+    // to the cover letter text to make sure the employer still gets the information!
+    let finalCoverLetter = coverLetter || "";
+    if (phone) finalCoverLetter += `\n\nPhone Number: ${phone}`;
+    if (linkedinUrl) finalCoverLetter += `\nLinkedIn Profile: ${linkedinUrl}`;
+
+    // 🟢 FIXED SQL QUERY: Matched exactly to the database schema
     const result = await pool.query(
       `INSERT INTO job_applications (
-        job_id, applicant_id, cover_letter, resume_url, phone, linkedin_url, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        job_id, applicant_id, cover_letter, resume_url
+      ) VALUES ($1, $2, $3, $4)
       RETURNING *`,
-      [jobId, req.userId, coverLetter, resume, phone, linkedinUrl || null]
+      [jobId, req.userId, finalCoverLetter, resume]
     );
 
     console.log("✅ Application submitted:", result.rows[0].id);
@@ -755,7 +763,7 @@ app.get("/api/jobs/:jobId/applications", verifyToken, async (req, res) => {
       FROM job_applications ja
       JOIN users u ON ja.applicant_id = u.id
       WHERE ja.job_id = $1
-      ORDER BY ja.created_at DESC`,
+      ORDER BY ja.applied_at DESC`, // 🟢 FIXED: Changed created_at to applied_at
       [jobId]
     );
 
@@ -793,7 +801,6 @@ app.get("/api/events", verifyToken, async (req, res) => {
 //        CONNECT FEATURE ROUTES
 // ==========================================
 
-// Send connection request
 app.post("/api/connections/:userId/request", verifyToken, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -846,7 +853,6 @@ app.post("/api/connections/:userId/request", verifyToken, async (req, res) => {
   }
 });
 
-// Get my connections
 app.get("/api/connections", verifyToken, async (req, res) => {
   try {
     const userId = req.userId;
@@ -896,7 +902,6 @@ app.get("/api/connections", verifyToken, async (req, res) => {
   }
 });
 
-// Get pending requests
 app.get("/api/connections/pending-requests", verifyToken, async (req, res) => {
   try {
     const userId = req.userId;
@@ -929,7 +934,6 @@ app.get("/api/connections/pending-requests", verifyToken, async (req, res) => {
   }
 });
 
-// Accept connection request
 app.post("/api/connections/:connectionId/accept", verifyToken, async (req, res) => {
   try {
     const { connectionId } = req.params;
@@ -964,7 +968,6 @@ app.post("/api/connections/:connectionId/accept", verifyToken, async (req, res) 
   }
 });
 
-// Reject connection request
 app.delete("/api/connections/:connectionId/reject", verifyToken, async (req, res) => {
   try {
     const { connectionId } = req.params;
@@ -996,7 +999,6 @@ app.delete("/api/connections/:connectionId/reject", verifyToken, async (req, res
   }
 });
 
-// Remove connection
 app.delete("/api/connections/:userId", verifyToken, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -1017,7 +1019,6 @@ app.delete("/api/connections/:userId", verifyToken, async (req, res) => {
   }
 });
 
-// Check connection status
 app.get("/api/connections/check/:userId", verifyToken, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -1041,20 +1042,17 @@ app.get("/api/connections/check/:userId", verifyToken, async (req, res) => {
   }
 });
 
-
-// 🟢 NEW FEATURE: MESSAGING ROUTES
+// ==========================================
+//        MESSAGING ROUTES
 // ==========================================
 
-// 1. Get or Create a Direct Message Room
 app.post("/api/messages/room/:otherUserId", verifyToken, async (req, res) => {
   try {
     const currentUserId = req.userId;
     const { otherUserId } = req.params;
 
-    // Create a unique, consistent room name using both IDs sorted alphabetically
     const roomName = [currentUserId, otherUserId].sort().join('_');
 
-    // Check if room already exists
     let roomCheck = await pool.query(
       "SELECT * FROM chat_rooms WHERE name = $1 AND type = 'direct'",
       [roomName]
@@ -1062,7 +1060,6 @@ app.post("/api/messages/room/:otherUserId", verifyToken, async (req, res) => {
 
     let room;
     if (roomCheck.rows.length === 0) {
-      // Create new room
       const newRoom = await pool.query(
         `INSERT INTO chat_rooms (name, type, created_by, created_at) 
          VALUES ($1, 'direct', $2, NOW()) RETURNING *`,
@@ -1073,7 +1070,6 @@ app.post("/api/messages/room/:otherUserId", verifyToken, async (req, res) => {
       room = roomCheck.rows[0];
     }
 
-    // Get the other user's basic info for the UI
     const otherUser = await pool.query(
       "SELECT id, first_name, last_name, profile_picture_url FROM users WHERE id = $1",
       [otherUserId]
@@ -1086,7 +1082,6 @@ app.post("/api/messages/room/:otherUserId", verifyToken, async (req, res) => {
   }
 });
 
-// 2. Get Messages for a Room
 app.get("/api/messages/:roomId", verifyToken, async (req, res) => {
   try {
     const { roomId } = req.params;
@@ -1107,7 +1102,6 @@ app.get("/api/messages/:roomId", verifyToken, async (req, res) => {
   }
 });
 
-// 3. Send a Message
 app.post("/api/messages/:roomId", verifyToken, async (req, res) => {
   try {
     const { roomId } = req.params;
@@ -1129,11 +1123,9 @@ app.post("/api/messages/:roomId", verifyToken, async (req, res) => {
   }
 });
 
-// 4. Get all user's active chats (Inbox)
 app.get("/api/inbox", verifyToken, async (req, res) => {
   try {
     const userId = req.userId;
-    // Find all rooms where the name contains the user's ID
     const rooms = await pool.query(
       `SELECT * FROM chat_rooms WHERE name LIKE $1 ORDER BY created_at DESC`,
       [`%${userId}%`]
@@ -1143,7 +1135,6 @@ app.get("/api/inbox", verifyToken, async (req, res) => {
     res.status(500).json({ message: "Failed to load inbox" });
   }
 });
-
 
 // ==========================================
 // ERROR HANDLER
