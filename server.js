@@ -158,10 +158,14 @@ app.get("/api/health", (req, res) => {
 
 app.post("/api/auth/register", async (req, res) => {
   try {
-    const { email, password, firstName, lastName, passoutYear } = req.body;
-
-    if (!email || !password || !firstName || !lastName || !passoutYear)
+    // 🟢 NEW FEATURE: Email sanitization (lowercase & trim spaces)
+    const rawEmail = req.body.email;
+    if (!rawEmail || !req.body.password || !req.body.firstName || !req.body.lastName || !req.body.passoutYear) {
       return res.status(400).json({ message: "All fields are required" });
+    }
+
+    const email = rawEmail.toLowerCase().trim();
+    const { password, firstName, lastName, passoutYear } = req.body;
 
     const hashedPassword = await bcrypt.hash(password, 12);
     const { otp, expiry } = generateOtpAndExpiry();
@@ -196,7 +200,9 @@ app.post("/api/auth/register", async (req, res) => {
 
 app.post("/api/auth/verify-otp", async (req, res) => {
   try {
-    const { email, otp } = req.body;
+    // 🟢 NEW FEATURE: Email sanitization
+    const email = req.body.email?.toLowerCase().trim();
+    const otp = req.body.otp;
 
     const q = await pool.query(
       "SELECT id, otp, otp_expires FROM users WHERE email = $1",
@@ -230,7 +236,8 @@ app.post("/api/auth/verify-otp", async (req, res) => {
 
 app.post("/api/auth/resend-otp", async (req, res) => {
   try {
-    const { email } = req.body;
+    // 🟢 NEW FEATURE: Email sanitization
+    const email = req.body.email?.toLowerCase().trim();
 
     const q = await pool.query(
       "SELECT id FROM users WHERE email = $1",
@@ -260,7 +267,9 @@ app.post("/api/auth/resend-otp", async (req, res) => {
 
 app.post("/api/auth/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    // 🟢 NEW FEATURE: Email sanitization
+    const email = req.body.email?.toLowerCase().trim();
+    const password = req.body.password;
 
     const q = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
 
@@ -298,7 +307,8 @@ app.post("/api/auth/login", async (req, res) => {
 
 app.post("/api/auth/forgot-password", async (req, res) => {
   try {
-    const { email } = req.body;
+    // 🟢 NEW FEATURE: Email sanitization
+    const email = req.body.email?.toLowerCase().trim();
 
     const q = await pool.query(
       "SELECT id FROM users WHERE email = $1",
