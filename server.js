@@ -519,9 +519,10 @@ app.get("/api/users/:id", verifyToken, async (req, res) => {
   }
 });
 
+// 🟢 NEW FEATURE: Backend Name Updating
 app.put("/api/users/profile", verifyToken, async (req, res) => {
   try {
-    const { headline, bio, location, company } = req.body;
+    const { headline, bio, location, company, firstName, lastName } = req.body;
 
     const q = await pool.query(
       `UPDATE users SET
@@ -529,14 +530,15 @@ app.put("/api/users/profile", verifyToken, async (req, res) => {
          bio = COALESCE($2, bio),
          location = COALESCE($3, location),
          current_company = COALESCE($4, current_company),
+         first_name = COALESCE($5, first_name),
+         last_name = COALESCE($6, last_name),
          updated_at = NOW()
-       WHERE id = $5
+       WHERE id = $7
        RETURNING id, email, first_name, last_name, headline, bio, location, 
                  current_company as company`,
-      [headline, bio, location, company, req.userId]
+      [headline, bio, location, company, firstName, lastName, req.userId]
     );
 
-    console.log("✅ Profile updated successfully");
     res.json({ user: q.rows[0] });
   } catch (err) {
     console.error("❌ Profile update error:", err);
@@ -560,13 +562,12 @@ app.delete("/api/users/account", verifyToken, async (req, res) => {
   }
 });
 
-// 🟢 NEW FEATURE: NOTIFICATION DOT INDICATORS (Fixed array null checking)
+// 🟢 FIXED FEATURE: True Unread Indicator Logic
 // ==========================================
 app.get("/api/user/indicators", verifyToken, async (req, res) => {
   try {
     const userId = req.userId;
     
-    // Check for any jobs posted AFTER the user's last login
     const jobsQuery = await pool.query(
       `SELECT COUNT(*) FROM jobs 
        WHERE created_at > (SELECT COALESCE(last_login, '1970-01-01'::timestamp) FROM users WHERE id = $1)
@@ -575,7 +576,6 @@ app.get("/api/user/indicators", verifyToken, async (req, res) => {
     );
     const hasNewJobs = parseInt(jobsQuery.rows[0].count) > 0;
 
-    // Check for unread messages (Null-safe array check)
     const msgsQuery = await pool.query(
       `SELECT COUNT(*) FROM chat_messages cm
        JOIN chat_rooms cr ON cm.room_id = cr.id
@@ -998,6 +998,7 @@ app.post("/api/messages/:roomId", verifyToken, async (req, res) => {
   }
 });
 
+// 🟢 NEW FEATURE: Inbox with precise unread notification dots!
 app.get("/api/inbox", verifyToken, async (req, res) => {
   try {
     const userId = req.userId;
@@ -1015,7 +1016,6 @@ app.get("/api/inbox", verifyToken, async (req, res) => {
         [otherUserId]
       );
 
-      // 🟢 NEW FEATURE: Check if THIS specific room has unread messages
       const unreadQuery = await pool.query(
         `SELECT COUNT(*) FROM chat_messages 
          WHERE room_id = $1 
