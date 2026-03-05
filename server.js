@@ -158,7 +158,6 @@ app.get("/api/health", (req, res) => {
 
 app.post("/api/auth/register", async (req, res) => {
   try {
-    // 🟢 NEW FEATURE: Email sanitization (lowercase & trim spaces)
     const rawEmail = req.body.email;
     if (!rawEmail || !req.body.password || !req.body.firstName || !req.body.lastName || !req.body.passoutYear) {
       return res.status(400).json({ message: "All fields are required" });
@@ -200,7 +199,6 @@ app.post("/api/auth/register", async (req, res) => {
 
 app.post("/api/auth/verify-otp", async (req, res) => {
   try {
-    // 🟢 NEW FEATURE: Email sanitization
     const email = req.body.email?.toLowerCase().trim();
     const otp = req.body.otp;
 
@@ -236,7 +234,6 @@ app.post("/api/auth/verify-otp", async (req, res) => {
 
 app.post("/api/auth/resend-otp", async (req, res) => {
   try {
-    // 🟢 NEW FEATURE: Email sanitization
     const email = req.body.email?.toLowerCase().trim();
 
     const q = await pool.query(
@@ -267,7 +264,6 @@ app.post("/api/auth/resend-otp", async (req, res) => {
 
 app.post("/api/auth/login", async (req, res) => {
   try {
-    // 🟢 NEW FEATURE: Email sanitization
     const email = req.body.email?.toLowerCase().trim();
     const password = req.body.password;
 
@@ -307,7 +303,6 @@ app.post("/api/auth/login", async (req, res) => {
 
 app.post("/api/auth/forgot-password", async (req, res) => {
   try {
-    // 🟢 NEW FEATURE: Email sanitization
     const email = req.body.email?.toLowerCase().trim();
 
     const q = await pool.query(
@@ -1045,6 +1040,110 @@ app.get("/api/connections/check/:userId", verifyToken, async (req, res) => {
     res.status(500).json({ message: "Failed to check connection status" });
   }
 });
+
+
+// 🟢 NEW FEATURE: MESSAGING ROUTES
+// ==========================================
+
+// 1. Get or Create a Direct Message Room
+app.post("/api/messages/room/:otherUserId", verifyToken, async (req, res) => {
+  try {
+    const currentUserId = req.userId;
+    const { otherUserId } = req.params;
+
+    // Create a unique, consistent room name using both IDs sorted alphabetically
+    const roomName = [currentUserId, otherUserId].sort().join('_');
+
+    // Check if room already exists
+    let roomCheck = await pool.query(
+      "SELECT * FROM chat_rooms WHERE name = $1 AND type = 'direct'",
+      [roomName]
+    );
+
+    let room;
+    if (roomCheck.rows.length === 0) {
+      // Create new room
+      const newRoom = await pool.query(
+        `INSERT INTO chat_rooms (name, type, created_by, created_at) 
+         VALUES ($1, 'direct', $2, NOW()) RETURNING *`,
+        [roomName, currentUserId]
+      );
+      room = newRoom.rows[0];
+    } else {
+      room = roomCheck.rows[0];
+    }
+
+    // Get the other user's basic info for the UI
+    const otherUser = await pool.query(
+      "SELECT id, first_name, last_name, profile_picture_url FROM users WHERE id = $1",
+      [otherUserId]
+    );
+
+    res.json({ room, otherUser: otherUser.rows[0] });
+  } catch (err) {
+    console.error("❌ Room error:", err);
+    res.status(500).json({ message: "Failed to load chat room" });
+  }
+});
+
+// 2. Get Messages for a Room
+app.get("/api/messages/:roomId", verifyToken, async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    
+    const messages = await pool.query(
+      `SELECT m.*, u.first_name, u.last_name 
+       FROM chat_messages m
+       JOIN users u ON m.sender_id = u.id
+       WHERE m.room_id = $1
+       ORDER BY m.created_at ASC`,
+      [roomId]
+    );
+
+    res.json({ messages: messages.rows });
+  } catch (err) {
+    console.error("❌ Get messages error:", err);
+    res.status(500).json({ message: "Failed to fetch messages" });
+  }
+});
+
+// 3. Send a Message
+app.post("/api/messages/:roomId", verifyToken, async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const { message } = req.body;
+    const senderId = req.userId;
+
+    if (!message.trim()) return res.status(400).json({ message: "Message cannot be empty" });
+
+    const newMsg = await pool.query(
+      `INSERT INTO chat_messages (room_id, sender_id, message, created_at) 
+       VALUES ($1, $2, $3, NOW()) RETURNING *`,
+      [roomId, senderId, message]
+    );
+
+    res.json({ message: newMsg.rows[0] });
+  } catch (err) {
+    console.error("❌ Send message error:", err);
+    res.status(500).json({ message: "Failed to send message" });
+  }
+});
+
+// 4. Get all user's active chats (Inbox)
+app.get("/api/inbox", verifyToken, async (req, res) => {
+  try {
+    const userId = req.userId;
+    // Find all rooms where the name contains the user's ID
+    const rooms = await pool.query(
+      `SELECT * FROM chat_rooms WHERE name LIKE $1 ORDER BY created_at DESC`,
+      [`%${userId}%`]
+    );
+    res.json({ rooms: rooms.rows });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to load inbox" });
+  }
+});
+
 
 // ==========================================
 // ERROR HANDLER
