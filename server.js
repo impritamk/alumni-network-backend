@@ -1,5 +1,5 @@
 // ==========================================
-//  ALUMNI NETWORK BACKEND (WITH CONNECT FEATURE)
+//  ALUMNI NETWORK BACKEND (WITH CONNECT & ADMIN FEATURES)
 // ==========================================
 
 const express = require("express");
@@ -30,11 +30,10 @@ pool.query("SELECT NOW()", (err) => {
 });
 
 // --------------------------
-// MIDDLEWARE (MUST BE BEFORE ROUTES)
+// MIDDLEWARE
 // --------------------------
 app.use(helmet());
 
-// ✅ FIXED CORS CONFIGURATION
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
   credentials: true,
@@ -47,11 +46,12 @@ app.use(express.urlencoded({ extended: true }));
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 800, // 🟢 CHANGED THIS FROM 100 TO 800
+  max: 800, 
 });
 app.use("/api/", limiter);
+
 // --------------------------
-// UTILS
+// UTILS & EMAIL
 // --------------------------
 function generateOtpAndExpiry(minutes = 10) {
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -59,9 +59,6 @@ function generateOtpAndExpiry(minutes = 10) {
   return { otp, expiry };
 }
 
-// --------------------------
-// EMAIL FUNCTION
-// --------------------------
 async function sendOtpEmail(email, otp) {
   try {
     await axios.post(
@@ -92,15 +89,12 @@ async function sendOtpEmail(email, otp) {
               <div class="content">
                 <p>Hello,</p>
                 <p>You're almost there! Use the OTP below to verify your email address:</p>
-                
                 <div class="otp-box">
                   <p style="margin: 0 0 10px 0; color: #6b7280;">Your verification code:</p>
                   <div class="otp-code">${otp}</div>
                   <p style="margin: 10px 0 0 0; color: #6b7280; font-size: 14px;">Valid for 10 minutes</p>
                 </div>
-                
                 <p>If you didn't request this, please ignore this email.</p>
-                
                 <p>Best regards,<br><strong>Alumni Network Team</strong></p>
               </div>
               <div class="footer">
@@ -144,15 +138,19 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-// --------------------------
-// HEALTH CHECK
-// --------------------------
+const requireAdmin = (req, res, next) => {
+  if (req.userRole !== 'admin') {
+    return res.status(403).json({ message: "Access denied. Admin only." });
+  }
+  next();
+};
+
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
 // ==========================================
-//                AUTH ROUTES
+//               AUTH ROUTES
 // ==========================================
 
 app.post("/api/auth/register", async (req, res) => {
@@ -235,10 +233,7 @@ app.post("/api/auth/resend-otp", async (req, res) => {
   try {
     const email = req.body.email?.toLowerCase().trim();
 
-    const q = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
-      [email]
-    );
+    const q = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
 
     if (q.rows.length === 0) {
       return res.status(404).json({ message: "User not found" });
@@ -252,11 +247,8 @@ app.post("/api/auth/resend-otp", async (req, res) => {
     );
 
     await sendOtpEmail(email, otp);
-    console.log("📧 OTP resent:", otp);
-
     res.json({ message: "OTP sent to email" });
   } catch (err) {
-    console.error("❌ Resend OTP error:", err);
     res.status(500).json({ message: "Failed to resend OTP" });
   }
 });
@@ -273,6 +265,11 @@ app.post("/api/auth/login", async (req, res) => {
 
     const user = q.rows[0];
 
+    // Check if banned
+    if (user.is_banned) {
+      return res.status(403).json({ message: "Account has been banned by an administrator." });
+    }
+
     if (user.verification_status !== "verified")
       return res.status(403).json({
         message: "Please verify your email before logging in",
@@ -282,9 +279,7 @@ app.post("/api/auth/login", async (req, res) => {
     if (!valid)
       return res.status(401).json({ message: "Invalid credentials" });
 
-    await pool.query("UPDATE users SET last_login = NOW() WHERE id = $1", [
-      user.id,
-    ]);
+    await pool.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id]);
 
     const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },
@@ -304,14 +299,8 @@ app.post("/api/auth/forgot-password", async (req, res) => {
   try {
     const email = req.body.email?.toLowerCase().trim();
 
-    const q = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
-      [email]
-    );
-
-    if (q.rows.length === 0) {
-      return res.status(404).json({ message: "Email not found" });
-    }
+    const q = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
+    if (q.rows.length === 0) return res.status(404).json({ message: "Email not found" });
 
     const userId = q.rows[0].id;
     const resetToken = jwt.sign(
@@ -333,61 +322,15 @@ app.post("/api/auth/forgot-password", async (req, res) => {
         sender: { email: process.env.FROM_EMAIL, name: "Alumni Network" },
         to: [{ email }],
         subject: "🔐 Reset Your Password - Alumni Network",
-        htmlContent: `
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <style>
-              body { font-family: Arial, sans-serif; background: #f9fafb; }
-              .container { max-width: 600px; margin: 0 auto; padding: 20px; background: white; border-radius: 8px; }
-              .header { background: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-              .content { padding: 20px; }
-              .button { background: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; margin: 20px 0; }
-              .footer { text-align: center; padding: 20px; color: #6b7280; font-size: 12px; }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <div class="header">
-                <h1>🎓 Alumni Network</h1>
-              </div>
-              <div class="content">
-                <p>Hello,</p>
-                <p>We received a request to reset your password. Click the button below to set a new password:</p>
-                
-                <div style="text-align: center;">
-                  <a href="${resetLink}" class="button">Reset Password</a>
-                </div>
-                
-                <p style="color: #6b7280; font-size: 14px;">
-                  This link expires in 1 hour.
-                </p>
-                
-                <p>If you didn't request this, please ignore this email.</p>
-                
-                <p>Best regards,<br><strong>Alumni Network Team</strong></p>
-              </div>
-              <div class="footer">
-                <p>&copy; 2024 Alumni Network. All rights reserved.</p>
-              </div>
-            </div>
-          </body>
-          </html>
-        `
+        htmlContent: `<p>Click here to reset your password: <a href="${resetLink}">Reset Password</a></p>`
       },
       {
-        headers: {
-          "accept": "application/json",
-          "api-key": process.env.BREVO_API_KEY,
-          "content-type": "application/json"
-        }
+        headers: { "accept": "application/json", "api-key": process.env.BREVO_API_KEY, "content-type": "application/json" }
       }
     );
 
-    console.log("✅ Password reset link sent to:", email);
     res.json({ message: "Password reset link sent to your email" });
   } catch (err) {
-    console.error("❌ Forgot password error:", err);
     res.status(500).json({ message: "Failed to send reset link" });
   }
 });
@@ -396,9 +339,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
   try {
     const { token, password } = req.body;
 
-    if (!token || !password) {
-      return res.status(400).json({ message: "Token and password are required" });
-    }
+    if (!token || !password) return res.status(400).json({ message: "Token and password are required" });
 
     let decoded;
     try {
@@ -412,13 +353,8 @@ app.post("/api/auth/reset-password", async (req, res) => {
       [decoded.userId, token]
     );
 
-    if (q.rows.length === 0) {
-      return res.status(400).json({ message: "Invalid reset token" });
-    }
-
-    if (new Date(q.rows[0].reset_token_expires) < new Date()) {
-      return res.status(400).json({ message: "Reset token has expired" });
-    }
+    if (q.rows.length === 0) return res.status(400).json({ message: "Invalid reset token" });
+    if (new Date(q.rows[0].reset_token_expires) < new Date()) return res.status(400).json({ message: "Reset token has expired" });
 
     const hashedPassword = await bcrypt.hash(password, 12);
 
@@ -427,10 +363,8 @@ app.post("/api/auth/reset-password", async (req, res) => {
       [hashedPassword, decoded.userId]
     );
 
-    console.log("✅ Password reset successful for user:", decoded.userId);
     res.json({ message: "Password reset successfully" });
   } catch (err) {
-    console.error("❌ Reset password error:", err);
     res.status(500).json({ message: "Failed to reset password" });
   }
 });
@@ -442,7 +376,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
 app.get("/api/auth/me", verifyToken, async (req, res) => {
   try {
     const q = await pool.query(
-      `SELECT id, email, first_name, last_name, headline, bio, role, 
+      `SELECT id, email, first_name, last_name, headline, bio, role, is_banned, 
               location, current_company as company, passout_year
        FROM users WHERE id = $1`,
       [req.userId]
@@ -465,7 +399,7 @@ app.get("/api/users/directory", verifyToken, async (req, res) => {
     let query = `
       SELECT id, first_name, last_name, email, headline, bio, passout_year,
              location, current_company as company
-      FROM users WHERE verification_status = 'verified'
+      FROM users WHERE verification_status = 'verified' AND is_banned = false
     `;
 
     const params = [];
@@ -489,7 +423,6 @@ app.get("/api/users/directory", verifyToken, async (req, res) => {
     const result = await pool.query(query, params);
     res.json({ users: result.rows });
   } catch (err) {
-    console.error("❌ Directory error:", err);
     res.status(500).json({ message: "Failed to fetch directory" });
   }
 });
@@ -503,7 +436,7 @@ app.get("/api/users/:id", verifyToken, async (req, res) => {
               passout_year, skills, current_company as company, current_position, 
               location, website, linkedin, github
        FROM users 
-       WHERE id = $1 AND verification_status = 'verified'`,
+       WHERE id = $1 AND verification_status = 'verified' AND is_banned = false`,
       [id]
     );
 
@@ -513,12 +446,10 @@ app.get("/api/users/:id", verifyToken, async (req, res) => {
 
     res.json({ user: q.rows[0] });
   } catch (err) {
-    console.error("❌ Get user error:", err);
     res.status(500).json({ message: "Failed to fetch user" });
   }
 });
 
-// 🟢 NEW FEATURE: Backend Name Updating
 app.put("/api/users/profile", verifyToken, async (req, res) => {
   try {
     const { headline, bio, location, company, firstName, lastName } = req.body;
@@ -540,7 +471,6 @@ app.put("/api/users/profile", verifyToken, async (req, res) => {
 
     res.json({ user: q.rows[0] });
   } catch (err) {
-    console.error("❌ Profile update error:", err);
     res.status(500).json({ message: "Failed to update profile" });
   }
 });
@@ -553,16 +483,12 @@ app.delete("/api/users/account", verifyToken, async (req, res) => {
     await pool.query("DELETE FROM jobs WHERE posted_by = $1", [userId]);
     await pool.query("DELETE FROM users WHERE id = $1", [userId]);
 
-    console.log("✅ Account deleted:", userId);
     res.json({ message: "Account deleted successfully" });
   } catch (err) {
-    console.error("❌ Delete account error:", err);
     res.status(500).json({ message: "Failed to delete account" });
   }
 });
 
-// 🟢 FIXED FEATURE: True Unread Indicator Logic
-// ==========================================
 app.get("/api/user/indicators", verifyToken, async (req, res) => {
   try {
     const userId = req.userId;
@@ -592,6 +518,90 @@ app.get("/api/user/indicators", verifyToken, async (req, res) => {
 });
 
 // ==========================================
+//          ADMIN ROUTES
+// ==========================================
+
+app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const q = await pool.query(
+      "SELECT id, first_name, last_name, email, role, is_banned FROM users ORDER BY created_at DESC"
+    );
+    res.json({ users: q.rows });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch users" });
+  }
+});
+
+app.patch("/api/admin/users/:id/ban", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    await pool.query("UPDATE users SET is_banned = true WHERE id = $1", [req.params.id]);
+    res.json({ message: "User banned successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to ban user" });
+  }
+});
+
+app.patch("/api/admin/users/:id/unban", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    await pool.query("UPDATE users SET is_banned = false WHERE id = $1", [req.params.id]);
+    res.json({ message: "User unbanned successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to unban user" });
+  }
+});
+
+// ==========================================
+//          POSTS ROUTES (COMMUNITY FEED)
+// ==========================================
+
+app.get("/api/posts", verifyToken, async (req, res) => {
+  try {
+    const q = await pool.query(`
+      SELECT p.id, p.content, p.created_at, p.user_id, u.first_name, u.last_name, u.role
+      FROM posts p
+      JOIN users u ON p.user_id = u.id
+      WHERE u.is_banned = false
+      ORDER BY p.created_at DESC
+    `);
+    res.json({ posts: q.rows });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch posts" });
+  }
+});
+
+app.post("/api/posts", verifyToken, async (req, res) => {
+  try {
+    const { content } = req.body;
+    if (!content) return res.status(400).json({ message: "Content is required" });
+
+    const q = await pool.query(
+      "INSERT INTO posts (user_id, content, created_at) VALUES ($1, $2, NOW()) RETURNING *",
+      [req.userId, content]
+    );
+    res.status(201).json({ post: q.rows[0] });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to create post" });
+  }
+});
+
+app.delete("/api/posts/:id", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (req.userRole === 'admin') {
+      await pool.query("DELETE FROM posts WHERE id = $1", [id]);
+    } else {
+      const del = await pool.query("DELETE FROM posts WHERE id = $1 AND user_id = $2 RETURNING id", [id, req.userId]);
+      if (del.rowCount === 0) return res.status(403).json({ message: "Unauthorized or post not found" });
+    }
+
+    res.json({ message: "Post deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to delete post" });
+  }
+});
+
+// ==========================================
 //          JOBS ROUTES
 // ==========================================
 
@@ -602,22 +612,17 @@ app.get("/api/jobs", verifyToken, async (req, res) => {
         j.id, j.title, j.company, j.description, j.requirements,
         j.location, j.salary_range, j.job_type, j.experience_level,
         j.is_active, j.created_at, j.expires_at, j.posted_by,
-        u.first_name,
-        u.last_name,
-        COUNT(ja.id) as application_count
+        u.first_name, u.last_name, COUNT(ja.id) as application_count
        FROM jobs j
        JOIN users u ON j.posted_by = u.id
        LEFT JOIN job_applications ja ON j.id = ja.job_id
        WHERE j.is_active = true OR j.posted_by = $1
        GROUP BY j.id, u.first_name, u.last_name
-       ORDER BY j.created_at DESC
-       LIMIT 50`,
+       ORDER BY j.created_at DESC LIMIT 50`,
       [req.userId]
     );
-
     res.json({ jobs: q.rows });
   } catch (err) {
-    console.error("❌ Get jobs error:", err);
     res.status(500).json({ message: "Failed to fetch jobs" });
   }
 });
@@ -638,14 +643,8 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
          posted_by, title, company, description, requirements,
          location, salary_range, job_type, experience_level, expires_at, 
          is_active, created_at
-       )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,NOW())
-       RETURNING *`,
-      [
-        req.userId, title, company, description, requirements || null,
-        location || null, salaryRange || null, jobType || null,
-        experienceLevel || null, expiresAt || null
-      ]
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,NOW()) RETURNING *`,
+      [req.userId, title, company, description, requirements || null, location || null, salaryRange || null, jobType || null, experienceLevel || null, expiresAt || null]
     );
 
     res.status(201).json({ job: q.rows[0], message: "Job posted successfully" });
@@ -657,23 +656,17 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
 app.delete("/api/jobs/:jobId", verifyToken, async (req, res) => {
   try {
     const { jobId } = req.params;
-
     const jobCheck = await pool.query("SELECT posted_by FROM jobs WHERE id = $1", [jobId]);
 
     if (jobCheck.rows.length === 0) return res.status(404).json({ message: "Job not found" });
     if (jobCheck.rows[0].posted_by !== req.userId) return res.status(403).json({ message: "Unauthorized" });
 
     await pool.query("DELETE FROM jobs WHERE id = $1", [jobId]);
-
     res.json({ message: "Job deleted successfully" });
   } catch (err) {
     res.status(500).json({ message: "Failed to delete job" });
   }
 });
-
-// ==========================================
-//         JOB APPLICATIONS
-// ==========================================
 
 app.post("/api/jobs/:jobId/apply", verifyToken, async (req, res) => {
   try {
@@ -685,25 +678,19 @@ app.post("/api/jobs/:jobId/apply", verifyToken, async (req, res) => {
       [jobId, req.userId]
     );
 
-    if (existing.rows.length > 0) {
-      return res.status(409).json({ message: "You have already applied to this job" });
-    }
+    if (existing.rows.length > 0) return res.status(409).json({ message: "You have already applied to this job" });
 
     let finalCoverLetter = coverLetter || "";
     if (phone) finalCoverLetter += `\n\nPhone Number: ${phone}`;
     if (linkedinUrl) finalCoverLetter += `\nLinkedIn Profile: ${linkedinUrl}`;
 
     const result = await pool.query(
-      `INSERT INTO job_applications (
-        job_id, applicant_id, cover_letter, resume_url
-      ) VALUES ($1, $2, $3, $4)
-      RETURNING *`,
+      `INSERT INTO job_applications (job_id, applicant_id, cover_letter, resume_url) VALUES ($1, $2, $3, $4) RETURNING *`,
       [jobId, req.userId, finalCoverLetter, resume]
     );
 
     res.status(201).json({ application: result.rows[0], message: "Application submitted successfully" });
   } catch (err) {
-    console.error("❌ Apply job error:", err);
     res.status(500).json({ message: "Failed to submit application" });
   }
 });
@@ -711,7 +698,6 @@ app.post("/api/jobs/:jobId/apply", verifyToken, async (req, res) => {
 app.get("/api/jobs/:jobId/applications", verifyToken, async (req, res) => {
   try {
     const { jobId } = req.params;
-
     const jobCheck = await pool.query("SELECT posted_by FROM jobs WHERE id = $1", [jobId]);
 
     if (jobCheck.rows.length === 0) return res.status(404).json({ message: "Job not found" });
@@ -721,36 +707,13 @@ app.get("/api/jobs/:jobId/applications", verifyToken, async (req, res) => {
       `SELECT ja.*, u.first_name, u.last_name, u.email, u.headline
       FROM job_applications ja
       JOIN users u ON ja.applicant_id = u.id
-      WHERE ja.job_id = $1
-      ORDER BY ja.applied_at DESC`,
+      WHERE ja.job_id = $1 ORDER BY ja.applied_at DESC`,
       [jobId]
     );
 
     res.json({ applications: result.rows });
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch applications" });
-  }
-});
-
-// ==========================================
-//               EVENTS
-// ==========================================
-
-app.get("/api/events", verifyToken, async (req, res) => {
-  try {
-    const q = await pool.query(
-      `SELECT e.*, u.first_name, u.last_name
-       FROM events e
-       JOIN users u ON e.created_by = u.id
-       WHERE e.is_active = true
-       AND e.start_time > NOW()
-       ORDER BY e.start_time ASC
-       LIMIT 50`
-    );
-
-    res.json({ events: q.rows });
-  } catch (err) {
-    res.status(500).json({ message: "Failed to fetch events" });
   }
 });
 
@@ -770,8 +733,7 @@ app.post("/api/connections/:userId/request", verifyToken, async (req, res) => {
 
     const existingConnection = await pool.query(
       `SELECT id, status FROM connections 
-       WHERE (user_id = $1 AND connected_user_id = $2) 
-          OR (user_id = $2 AND connected_user_id = $1)`,
+       WHERE (user_id = $1 AND connected_user_id = $2) OR (user_id = $2 AND connected_user_id = $1)`,
       [senderId, userId]
     );
 
@@ -782,9 +744,7 @@ app.post("/api/connections/:userId/request", verifyToken, async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO connections (user_id, connected_user_id, status, created_at)
-       VALUES ($1, $2, 'pending', NOW())
-       RETURNING *`,
+      `INSERT INTO connections (user_id, connected_user_id, status, created_at) VALUES ($1, $2, 'pending', NOW()) RETURNING *`,
       [senderId, userId]
     );
 
@@ -807,14 +767,12 @@ app.get("/api/connections", verifyToken, async (req, res) => {
       JOIN users u ON (CASE WHEN c.user_id = $1 THEN c.connected_user_id = u.id ELSE c.user_id = u.id END)
       WHERE (c.user_id = $1 OR c.connected_user_id = $1)
     `;
-
     const params = [userId];
 
     if (status) {
       query += ` AND c.status = $2`;
       params.push(status);
     }
-
     query += ` ORDER BY c.created_at DESC`;
 
     const result = await pool.query(query, params);
@@ -827,17 +785,12 @@ app.get("/api/connections", verifyToken, async (req, res) => {
 app.get("/api/connections/pending-requests", verifyToken, async (req, res) => {
   try {
     const userId = req.userId;
-
     const result = await pool.query(
-      `SELECT c.id as connection_id, c.user_id, c.created_at,
-        u.id, u.first_name, u.last_name, u.headline, u.email, u.passout_year
-      FROM connections c
-      JOIN users u ON c.user_id = u.id
-      WHERE c.connected_user_id = $1 AND c.status = 'pending'
-      ORDER BY c.created_at DESC`,
+      `SELECT c.id as connection_id, c.user_id, c.created_at, u.id, u.first_name, u.last_name, u.headline, u.email, u.passout_year
+      FROM connections c JOIN users u ON c.user_id = u.id
+      WHERE c.connected_user_id = $1 AND c.status = 'pending' ORDER BY c.created_at DESC`,
       [userId]
     );
-
     res.json({ pending: result.rows, count: result.rows.length });
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch pending requests" });
@@ -855,7 +808,6 @@ app.post("/api/connections/:connectionId/accept", verifyToken, async (req, res) 
     if (connectionCheck.rows[0].connected_user_id !== userId) return res.status(403).json({ message: "Unauthorized" });
 
     const result = await pool.query(`UPDATE connections SET status = 'accepted', updated_at = NOW() WHERE id = $1 RETURNING *`, [connectionId]);
-
     res.json({ connection: result.rows[0], message: "Connection accepted" });
   } catch (err) {
     res.status(500).json({ message: "Failed to accept connection" });
@@ -885,11 +837,9 @@ app.delete("/api/connections/:userId", verifyToken, async (req, res) => {
     const currentUserId = req.userId;
 
     await pool.query(
-      `DELETE FROM connections 
-       WHERE (user_id = $1 AND connected_user_id = $2) OR (user_id = $2 AND connected_user_id = $1)`,
+      `DELETE FROM connections WHERE (user_id = $1 AND connected_user_id = $2) OR (user_id = $2 AND connected_user_id = $1)`,
       [currentUserId, userId]
     );
-
     res.json({ message: "Connection removed" });
   } catch (err) {
     res.status(500).json({ message: "Failed to remove connection" });
@@ -902,13 +852,11 @@ app.get("/api/connections/check/:userId", verifyToken, async (req, res) => {
     const currentUserId = req.userId;
 
     const result = await pool.query(
-      `SELECT status FROM connections 
-       WHERE (user_id = $1 AND connected_user_id = $2) OR (user_id = $2 AND connected_user_id = $1)`,
+      `SELECT status FROM connections WHERE (user_id = $1 AND connected_user_id = $2) OR (user_id = $2 AND connected_user_id = $1)`,
       [currentUserId, userId]
     );
 
     if (result.rows.length === 0) return res.json({ status: "not_connected" });
-
     res.json({ status: result.rows[0].status });
   } catch (err) {
     res.status(500).json({ message: "Failed to check connection status" });
@@ -952,25 +900,19 @@ app.get("/api/messages/:roomId", verifyToken, async (req, res) => {
     const { roomId } = req.params;
     const userId = req.userId;
     
-    // 🟢 FIXED: Null-safe Array check when marking messages as read
     await pool.query(
       `UPDATE chat_messages 
        SET read_by = array_append(COALESCE(read_by, ARRAY[]::uuid[]), $1) 
-       WHERE room_id = $2 
-       AND sender_id != $1 
-       AND (read_by IS NULL OR NOT ($1 = ANY(read_by)))`,
+       WHERE room_id = $2 AND sender_id != $1 AND (read_by IS NULL OR NOT ($1 = ANY(read_by)))`,
       [userId, roomId]
     );
 
     const messages = await pool.query(
       `SELECT m.*, u.first_name, u.last_name 
-       FROM chat_messages m
-       JOIN users u ON m.sender_id = u.id
-       WHERE m.room_id = $1
-       ORDER BY m.created_at ASC`,
+       FROM chat_messages m JOIN users u ON m.sender_id = u.id
+       WHERE m.room_id = $1 ORDER BY m.created_at ASC`,
       [roomId]
     );
-
     res.json({ messages: messages.rows });
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch messages" });
@@ -986,45 +928,31 @@ app.post("/api/messages/:roomId", verifyToken, async (req, res) => {
     if (!message.trim()) return res.status(400).json({ message: "Message cannot be empty" });
 
     const newMsg = await pool.query(
-      `INSERT INTO chat_messages (room_id, sender_id, message, created_at) 
-       VALUES ($1, $2, $3, NOW()) RETURNING *`,
+      `INSERT INTO chat_messages (room_id, sender_id, message, created_at) VALUES ($1, $2, $3, NOW()) RETURNING *`,
       [roomId, senderId, message]
     );
-
     res.json({ message: newMsg.rows[0] });
   } catch (err) {
     res.status(500).json({ message: "Failed to send message" });
   }
 });
 
-// 🟢 NEW FEATURE: Inbox with precise unread notification dots!
 app.get("/api/inbox", verifyToken, async (req, res) => {
   try {
     const userId = req.userId;
-    const rooms = await pool.query(
-      `SELECT * FROM chat_rooms WHERE name LIKE $1 ORDER BY created_at DESC`,
-      [`%${userId}%`]
-    );
+    const rooms = await pool.query(`SELECT * FROM chat_rooms WHERE name LIKE $1 ORDER BY created_at DESC`, [`%${userId}%`]);
     
     const inboxData = await Promise.all(rooms.rows.map(async (room) => {
       const ids = room.name.split('_');
       const otherUserId = ids[0] === userId ? ids[1] : ids[0];
       
-      const userRes = await pool.query(
-        "SELECT id, first_name, last_name FROM users WHERE id = $1", 
-        [otherUserId]
-      );
-
+      const userRes = await pool.query("SELECT id, first_name, last_name FROM users WHERE id = $1", [otherUserId]);
       const unreadQuery = await pool.query(
-        `SELECT COUNT(*) FROM chat_messages 
-         WHERE room_id = $1 
-         AND sender_id != $2 
-         AND (read_by IS NULL OR NOT ($2 = ANY(read_by)))`,
+        `SELECT COUNT(*) FROM chat_messages WHERE room_id = $1 AND sender_id != $2 AND (read_by IS NULL OR NOT ($2 = ANY(read_by)))`,
         [room.id, userId]
       );
       
       const hasUnread = parseInt(unreadQuery.rows[0].count) > 0;
-      
       return { room: room, otherUser: userRes.rows[0], hasUnread };
     }));
 
@@ -1035,16 +963,12 @@ app.get("/api/inbox", verifyToken, async (req, res) => {
 });
 
 // ==========================================
-// ERROR HANDLER
+// ERROR HANDLER & SERVER START
 // ==========================================
 app.use((err, req, res, next) => {
   console.error("❌ Unhandled Error:", err);
   res.status(500).json({ message: "Server error" });
 });
 
-// ==========================================
-// START SERVER
-// ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-
