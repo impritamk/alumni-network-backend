@@ -1,5 +1,5 @@
 // ==========================================
-//  ALUMNI NETWORK BACKEND (FINAL VERSION)
+//  ALUMNI NETWORK BACKEND (WITH CONNECT FEATURE)
 // ==========================================
 
 const express = require("express");
@@ -228,7 +228,6 @@ app.post("/api/auth/verify-otp", async (req, res) => {
   }
 });
 
-// ✅ RESEND OTP ENDPOINT
 app.post("/api/auth/resend-otp", async (req, res) => {
   try {
     const { email } = req.body;
@@ -297,7 +296,6 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-// ✅ FORGOT PASSWORD ENDPOINT
 app.post("/api/auth/forgot-password", async (req, res) => {
   try {
     const { email } = req.body;
@@ -318,13 +316,11 @@ app.post("/api/auth/forgot-password", async (req, res) => {
       { expiresIn: "1h" }
     );
 
-    // Store reset token in database
     await pool.query(
       "UPDATE users SET reset_token = $1, reset_token_expires = NOW() + INTERVAL '1 hour' WHERE id = $2",
       [resetToken, userId]
     );
 
-    // Send reset email
     const resetLink = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
     
     await axios.post(
@@ -392,7 +388,6 @@ app.post("/api/auth/forgot-password", async (req, res) => {
   }
 });
 
-// ✅ RESET PASSWORD ENDPOINT
 app.post("/api/auth/reset-password", async (req, res) => {
   try {
     const { token, password } = req.body;
@@ -401,7 +396,6 @@ app.post("/api/auth/reset-password", async (req, res) => {
       return res.status(400).json({ message: "Token and password are required" });
     }
 
-    // Verify token
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -409,7 +403,6 @@ app.post("/api/auth/reset-password", async (req, res) => {
       return res.status(400).json({ message: "Invalid or expired reset token" });
     }
 
-    // Check if reset token matches in database
     const q = await pool.query(
       "SELECT id, reset_token_expires FROM users WHERE id = $1 AND reset_token = $2",
       [decoded.userId, token]
@@ -423,10 +416,8 @@ app.post("/api/auth/reset-password", async (req, res) => {
       return res.status(400).json({ message: "Reset token has expired" });
     }
 
-    // Hash new password
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    // Update password and clear reset token
     await pool.query(
       "UPDATE users SET password = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2",
       [hashedPassword, decoded.userId]
@@ -441,7 +432,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
 });
 
 // ==========================================
-//          USER ROUTES (FIXED)
+//          USER ROUTES
 // ==========================================
 
 app.get("/api/auth/me", verifyToken, async (req, res) => {
@@ -551,24 +542,20 @@ app.put("/api/users/profile", verifyToken, async (req, res) => {
   }
 });
 
-// DELETE ACCOUNT (user deletes their own account)
 app.delete("/api/users/account", verifyToken, async (req, res) => {
   try {
     const userId = req.userId;
 
-    // Delete all job applications from this user
     await pool.query(
       "DELETE FROM job_applications WHERE applicant_id = $1",
       [userId]
     );
 
-    // Delete all jobs posted by this user
     await pool.query(
       "DELETE FROM jobs WHERE posted_by = $1",
       [userId]
     );
 
-    // Delete the user account
     await pool.query(
       "DELETE FROM users WHERE id = $1",
       [userId]
@@ -583,7 +570,7 @@ app.delete("/api/users/account", verifyToken, async (req, res) => {
 });
 
 // ==========================================
-//          JOBS ROUTES (FIXED)
+//          JOBS ROUTES
 // ==========================================
 
 app.get("/api/jobs", verifyToken, async (req, res) => {
@@ -672,7 +659,6 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
   }
 });
 
-// DELETE JOB (only by who posted it)
 app.delete("/api/jobs/:jobId", verifyToken, async (req, res) => {
   try {
     const { jobId } = req.params;
@@ -795,6 +781,258 @@ app.get("/api/events", verifyToken, async (req, res) => {
   } catch (err) {
     console.error("❌ Events error:", err);
     res.status(500).json({ message: "Failed to fetch events" });
+  }
+});
+
+// ==========================================
+//        CONNECT FEATURE ROUTES
+// ==========================================
+
+// Send connection request
+app.post("/api/connections/:userId/request", verifyToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const senderId = req.userId;
+
+    if (userId === senderId) {
+      return res.status(400).json({ message: "Cannot connect with yourself" });
+    }
+
+    const userCheck = await pool.query(
+      "SELECT id FROM users WHERE id = $1",
+      [userId]
+    );
+
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const existingConnection = await pool.query(
+      `SELECT id, status FROM connections 
+       WHERE (user_id = $1 AND connected_user_id = $2) 
+          OR (user_id = $2 AND connected_user_id = $1)`,
+      [senderId, userId]
+    );
+
+    if (existingConnection.rows.length > 0) {
+      const status = existingConnection.rows[0].status;
+      if (status === "accepted") {
+        return res.status(409).json({ message: "Already connected" });
+      } else if (status === "pending") {
+        return res.status(409).json({ message: "Connection request already sent" });
+      }
+    }
+
+    const result = await pool.query(
+      `INSERT INTO connections (user_id, connected_user_id, status, created_at)
+       VALUES ($1, $2, 'pending', NOW())
+       RETURNING *`,
+      [senderId, userId]
+    );
+
+    console.log("✅ Connection request sent:", result.rows[0].id);
+    res.status(201).json({ 
+      connection: result.rows[0],
+      message: "Connection request sent" 
+    });
+  } catch (err) {
+    console.error("❌ Send connection request error:", err);
+    res.status(500).json({ message: "Failed to send connection request" });
+  }
+});
+
+// Get my connections
+app.get("/api/connections", verifyToken, async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { status = "accepted" } = req.query;
+
+    let query = `
+      SELECT 
+        c.id as connection_id,
+        c.user_id,
+        c.connected_user_id,
+        c.status,
+        c.created_at,
+        CASE 
+          WHEN c.user_id = $1 THEN c.connected_user_id
+          ELSE c.user_id
+        END as connected_to,
+        u.id,
+        u.first_name,
+        u.last_name,
+        u.headline,
+        u.email,
+        u.passout_year
+      FROM connections c
+      JOIN users u ON (
+        CASE 
+          WHEN c.user_id = $1 THEN c.connected_user_id = u.id
+          ELSE c.user_id = u.id
+        END
+      )
+      WHERE (c.user_id = $1 OR c.connected_user_id = $1)
+    `;
+
+    const params = [userId];
+
+    if (status) {
+      query += ` AND c.status = $2`;
+      params.push(status);
+    }
+
+    query += ` ORDER BY c.created_at DESC`;
+
+    const result = await pool.query(query, params);
+    res.json({ connections: result.rows });
+  } catch (err) {
+    console.error("❌ Get connections error:", err);
+    res.status(500).json({ message: "Failed to fetch connections" });
+  }
+});
+
+// Get pending requests
+app.get("/api/connections/pending-requests", verifyToken, async (req, res) => {
+  try {
+    const userId = req.userId;
+
+    const result = await pool.query(
+      `SELECT 
+        c.id as connection_id,
+        c.user_id,
+        c.created_at,
+        u.id,
+        u.first_name,
+        u.last_name,
+        u.headline,
+        u.email,
+        u.passout_year
+      FROM connections c
+      JOIN users u ON c.user_id = u.id
+      WHERE c.connected_user_id = $1 AND c.status = 'pending'
+      ORDER BY c.created_at DESC`,
+      [userId]
+    );
+
+    res.json({ 
+      pending: result.rows,
+      count: result.rows.length 
+    });
+  } catch (err) {
+    console.error("❌ Get pending requests error:", err);
+    res.status(500).json({ message: "Failed to fetch pending requests" });
+  }
+});
+
+// Accept connection request
+app.post("/api/connections/:connectionId/accept", verifyToken, async (req, res) => {
+  try {
+    const { connectionId } = req.params;
+    const userId = req.userId;
+
+    const connectionCheck = await pool.query(
+      "SELECT id, connected_user_id FROM connections WHERE id = $1",
+      [connectionId]
+    );
+
+    if (connectionCheck.rows.length === 0) {
+      return res.status(404).json({ message: "Connection not found" });
+    }
+
+    if (connectionCheck.rows[0].connected_user_id !== userId) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    const result = await pool.query(
+      `UPDATE connections SET status = 'accepted', updated_at = NOW() WHERE id = $1 RETURNING *`,
+      [connectionId]
+    );
+
+    console.log("✅ Connection accepted:", connectionId);
+    res.json({ 
+      connection: result.rows[0],
+      message: "Connection accepted" 
+    });
+  } catch (err) {
+    console.error("❌ Accept connection error:", err);
+    res.status(500).json({ message: "Failed to accept connection" });
+  }
+});
+
+// Reject connection request
+app.delete("/api/connections/:connectionId/reject", verifyToken, async (req, res) => {
+  try {
+    const { connectionId } = req.params;
+    const userId = req.userId;
+
+    const connectionCheck = await pool.query(
+      "SELECT id, connected_user_id FROM connections WHERE id = $1",
+      [connectionId]
+    );
+
+    if (connectionCheck.rows.length === 0) {
+      return res.status(404).json({ message: "Connection not found" });
+    }
+
+    if (connectionCheck.rows[0].connected_user_id !== userId) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    await pool.query(
+      "DELETE FROM connections WHERE id = $1",
+      [connectionId]
+    );
+
+    console.log("✅ Connection rejected:", connectionId);
+    res.json({ message: "Connection request rejected" });
+  } catch (err) {
+    console.error("❌ Reject connection error:", err);
+    res.status(500).json({ message: "Failed to reject connection" });
+  }
+});
+
+// Remove connection
+app.delete("/api/connections/:userId", verifyToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = req.userId;
+
+    await pool.query(
+      `DELETE FROM connections 
+       WHERE (user_id = $1 AND connected_user_id = $2) 
+          OR (user_id = $2 AND connected_user_id = $1)`,
+      [currentUserId, userId]
+    );
+
+    console.log("✅ Connection removed");
+    res.json({ message: "Connection removed" });
+  } catch (err) {
+    console.error("❌ Remove connection error:", err);
+    res.status(500).json({ message: "Failed to remove connection" });
+  }
+});
+
+// Check connection status
+app.get("/api/connections/check/:userId", verifyToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = req.userId;
+
+    const result = await pool.query(
+      `SELECT status FROM connections 
+       WHERE (user_id = $1 AND connected_user_id = $2) 
+          OR (user_id = $2 AND connected_user_id = $1)`,
+      [currentUserId, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({ status: "not_connected" });
+    }
+
+    res.json({ status: result.rows[0].status });
+  } catch (err) {
+    console.error("❌ Check connection status error:", err);
+    res.status(500).json({ message: "Failed to check connection status" });
   }
 });
 
