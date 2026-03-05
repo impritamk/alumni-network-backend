@@ -1,5 +1,5 @@
 // ==========================================
-//  ALUMNI NETWORK BACKEND (WITH CONNECT & ADMIN FEATURES)
+//  ALUMNI NETWORK BACKEND (WITH ADMIN OVERRIDES & SEARCH)
 // ==========================================
 
 const express = require("express");
@@ -185,11 +185,8 @@ app.post("/api/auth/register", async (req, res) => {
     );
 
     await sendOtpEmail(email, otp);
-    console.log("📧 OTP issued:", otp);
-
     res.json({ message: "OTP sent to email", email });
   } catch (err) {
-    console.error("❌ Registration error:", err);
     res.status(500).json({ message: "Registration failed" });
   }
 });
@@ -199,32 +196,19 @@ app.post("/api/auth/verify-otp", async (req, res) => {
     const email = req.body.email?.toLowerCase().trim();
     const otp = req.body.otp;
 
-    const q = await pool.query(
-      "SELECT id, otp, otp_expires FROM users WHERE email = $1",
-      [email]
-    );
-
-    if (q.rows.length === 0)
-      return res.status(400).json({ message: "User not found" });
+    const q = await pool.query("SELECT id, otp, otp_expires FROM users WHERE email = $1", [email]);
+    if (q.rows.length === 0) return res.status(400).json({ message: "User not found" });
 
     const user = q.rows[0];
-
-    if (user.otp !== otp)
-      return res.status(400).json({ message: "Incorrect OTP" });
-
-    if (new Date(user.otp_expires) < new Date())
-      return res.status(400).json({ message: "OTP expired" });
+    if (user.otp !== otp) return res.status(400).json({ message: "Incorrect OTP" });
+    if (new Date(user.otp_expires) < new Date()) return res.status(400).json({ message: "OTP expired" });
 
     await pool.query(
-      `UPDATE users
-       SET verification_status = 'verified', otp = NULL, otp_expires = NULL
-       WHERE id = $1`,
+      `UPDATE users SET verification_status = 'verified', otp = NULL, otp_expires = NULL WHERE id = $1`,
       [user.id]
     );
-
     res.json({ message: "Email verified successfully" });
   } catch (err) {
-    console.error("❌ Verify OTP error:", err);
     res.status(500).json({ message: "OTP verification failed" });
   }
 });
@@ -232,20 +216,11 @@ app.post("/api/auth/verify-otp", async (req, res) => {
 app.post("/api/auth/resend-otp", async (req, res) => {
   try {
     const email = req.body.email?.toLowerCase().trim();
-
     const q = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
-
-    if (q.rows.length === 0) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    if (q.rows.length === 0) return res.status(404).json({ message: "User not found" });
 
     const { otp, expiry } = generateOtpAndExpiry();
-
-    await pool.query(
-      "UPDATE users SET otp = $1, otp_expires = $2 WHERE email = $3",
-      [otp, expiry, email]
-    );
-
+    await pool.query("UPDATE users SET otp = $1, otp_expires = $2 WHERE email = $3", [otp, expiry, email]);
     await sendOtpEmail(email, otp);
     res.json({ message: "OTP sent to email" });
   } catch (err) {
@@ -259,25 +234,14 @@ app.post("/api/auth/login", async (req, res) => {
     const password = req.body.password;
 
     const q = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
-
-    if (q.rows.length === 0)
-      return res.status(401).json({ message: "Invalid credentials" });
+    if (q.rows.length === 0) return res.status(401).json({ message: "Invalid credentials" });
 
     const user = q.rows[0];
-
-    // Check if banned
-    if (user.is_banned) {
-      return res.status(403).json({ message: "Account has been banned by an administrator." });
-    }
-
-    if (user.verification_status !== "verified")
-      return res.status(403).json({
-        message: "Please verify your email before logging in",
-      });
+    if (user.is_banned) return res.status(403).json({ message: "Account has been banned by an administrator." });
+    if (user.verification_status !== "verified") return res.status(403).json({ message: "Please verify your email before logging in" });
 
     const valid = await bcrypt.compare(password, user.password);
-    if (!valid)
-      return res.status(401).json({ message: "Invalid credentials" });
+    if (!valid) return res.status(401).json({ message: "Invalid credentials" });
 
     await pool.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id]);
 
@@ -290,7 +254,6 @@ app.post("/api/auth/login", async (req, res) => {
     delete user.password;
     res.json({ token, user });
   } catch (err) {
-    console.error("❌ Login error:", err);
     res.status(500).json({ message: "Login failed" });
   }
 });
@@ -298,16 +261,11 @@ app.post("/api/auth/login", async (req, res) => {
 app.post("/api/auth/forgot-password", async (req, res) => {
   try {
     const email = req.body.email?.toLowerCase().trim();
-
     const q = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
     if (q.rows.length === 0) return res.status(404).json({ message: "Email not found" });
 
     const userId = q.rows[0].id;
-    const resetToken = jwt.sign(
-      { userId, type: "reset" },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
-    );
+    const resetToken = jwt.sign({ userId, type: "reset" }, process.env.JWT_SECRET, { expiresIn: "1h" });
 
     await pool.query(
       "UPDATE users SET reset_token = $1, reset_token_expires = NOW() + INTERVAL '1 hour' WHERE id = $2",
@@ -324,9 +282,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
         subject: "🔐 Reset Your Password - Alumni Network",
         htmlContent: `<p>Click here to reset your password: <a href="${resetLink}">Reset Password</a></p>`
       },
-      {
-        headers: { "accept": "application/json", "api-key": process.env.BREVO_API_KEY, "content-type": "application/json" }
-      }
+      { headers: { "accept": "application/json", "api-key": process.env.BREVO_API_KEY, "content-type": "application/json" } }
     );
 
     res.json({ message: "Password reset link sent to your email" });
@@ -338,26 +294,18 @@ app.post("/api/auth/forgot-password", async (req, res) => {
 app.post("/api/auth/reset-password", async (req, res) => {
   try {
     const { token, password } = req.body;
-
     if (!token || !password) return res.status(400).json({ message: "Token and password are required" });
 
     let decoded;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (err) {
-      return res.status(400).json({ message: "Invalid or expired reset token" });
-    }
+    try { decoded = jwt.verify(token, process.env.JWT_SECRET); } 
+    catch (err) { return res.status(400).json({ message: "Invalid or expired reset token" }); }
 
-    const q = await pool.query(
-      "SELECT id, reset_token_expires FROM users WHERE id = $1 AND reset_token = $2",
-      [decoded.userId, token]
-    );
+    const q = await pool.query("SELECT id, reset_token_expires FROM users WHERE id = $1 AND reset_token = $2", [decoded.userId, token]);
 
     if (q.rows.length === 0) return res.status(400).json({ message: "Invalid reset token" });
     if (new Date(q.rows[0].reset_token_expires) < new Date()) return res.status(400).json({ message: "Reset token has expired" });
 
     const hashedPassword = await bcrypt.hash(password, 12);
-
     await pool.query(
       "UPDATE users SET password = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2",
       [hashedPassword, decoded.userId]
@@ -382,26 +330,22 @@ app.get("/api/auth/me", verifyToken, async (req, res) => {
       [req.userId]
     );
 
-    if (q.rows.length === 0)
-      return res.status(404).json({ message: "User not found" });
-
+    if (q.rows.length === 0) return res.status(404).json({ message: "User not found" });
     res.json({ user: q.rows[0] });
   } catch (err) {
-    console.error("❌ Me error:", err);
     res.status(500).json({ message: "Failed to fetch user" });
   }
 });
 
 app.get("/api/users/directory", verifyToken, async (req, res) => {
   try {
-    const { search, passoutYear, limit = 20, offset = 0 } = req.query;
+    const { search, passoutYear, limit = 50, offset = 0 } = req.query;
 
     let query = `
       SELECT id, first_name, last_name, email, headline, bio, passout_year,
              location, current_company as company
       FROM users WHERE verification_status = 'verified' AND is_banned = false
     `;
-
     const params = [];
     let i = 1;
 
@@ -430,20 +374,13 @@ app.get("/api/users/directory", verifyToken, async (req, res) => {
 app.get("/api/users/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
-
     const q = await pool.query(
-      `SELECT id, first_name, last_name, email, headline, bio, 
-              passout_year, skills, current_company as company, current_position, 
-              location, website, linkedin, github
-       FROM users 
-       WHERE id = $1 AND verification_status = 'verified' AND is_banned = false`,
+      `SELECT id, first_name, last_name, email, headline, bio, passout_year, skills, current_company as company, current_position, location, website, linkedin, github
+       FROM users WHERE id = $1 AND verification_status = 'verified' AND is_banned = false`,
       [id]
     );
 
-    if (q.rows.length === 0) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
+    if (q.rows.length === 0) return res.status(404).json({ message: "User not found" });
     res.json({ user: q.rows[0] });
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch user" });
@@ -453,22 +390,14 @@ app.get("/api/users/:id", verifyToken, async (req, res) => {
 app.put("/api/users/profile", verifyToken, async (req, res) => {
   try {
     const { headline, bio, location, company, firstName, lastName } = req.body;
-
     const q = await pool.query(
       `UPDATE users SET
-         headline = COALESCE($1, headline),
-         bio = COALESCE($2, bio),
-         location = COALESCE($3, location),
-         current_company = COALESCE($4, current_company),
-         first_name = COALESCE($5, first_name),
-         last_name = COALESCE($6, last_name),
-         updated_at = NOW()
-       WHERE id = $7
-       RETURNING id, email, first_name, last_name, headline, bio, location, 
-                 current_company as company`,
+         headline = COALESCE($1, headline), bio = COALESCE($2, bio), location = COALESCE($3, location),
+         current_company = COALESCE($4, current_company), first_name = COALESCE($5, first_name),
+         last_name = COALESCE($6, last_name), updated_at = NOW()
+       WHERE id = $7 RETURNING id, email, first_name, last_name, headline, bio, location, current_company as company`,
       [headline, bio, location, company, firstName, lastName, req.userId]
     );
-
     res.json({ user: q.rows[0] });
   } catch (err) {
     res.status(500).json({ message: "Failed to update profile" });
@@ -478,11 +407,9 @@ app.put("/api/users/profile", verifyToken, async (req, res) => {
 app.delete("/api/users/account", verifyToken, async (req, res) => {
   try {
     const userId = req.userId;
-
     await pool.query("DELETE FROM job_applications WHERE applicant_id = $1", [userId]);
     await pool.query("DELETE FROM jobs WHERE posted_by = $1", [userId]);
     await pool.query("DELETE FROM users WHERE id = $1", [userId]);
-
     res.json({ message: "Account deleted successfully" });
   } catch (err) {
     res.status(500).json({ message: "Failed to delete account" });
@@ -492,21 +419,15 @@ app.delete("/api/users/account", verifyToken, async (req, res) => {
 app.get("/api/user/indicators", verifyToken, async (req, res) => {
   try {
     const userId = req.userId;
-    
     const jobsQuery = await pool.query(
-      `SELECT COUNT(*) FROM jobs 
-       WHERE created_at > (SELECT COALESCE(last_login, '1970-01-01'::timestamp) FROM users WHERE id = $1)
-       AND posted_by != $1`,
+      `SELECT COUNT(*) FROM jobs WHERE created_at > (SELECT COALESCE(last_login, '1970-01-01'::timestamp) FROM users WHERE id = $1) AND posted_by != $1`,
       [userId]
     );
     const hasNewJobs = parseInt(jobsQuery.rows[0].count) > 0;
 
     const msgsQuery = await pool.query(
-      `SELECT COUNT(*) FROM chat_messages cm
-       JOIN chat_rooms cr ON cm.room_id = cr.id
-       WHERE cr.name LIKE $1 
-       AND cm.sender_id != $2 
-       AND (cm.read_by IS NULL OR NOT ($2 = ANY(cm.read_by)))`,
+      `SELECT COUNT(*) FROM chat_messages cm JOIN chat_rooms cr ON cm.room_id = cr.id
+       WHERE cr.name LIKE $1 AND cm.sender_id != $2 AND (cm.read_by IS NULL OR NOT ($2 = ANY(cm.read_by)))`,
       [`%${userId}%`, userId]
     );
     const hasUnreadMessages = parseInt(msgsQuery.rows[0].count) > 0;
@@ -523,9 +444,18 @@ app.get("/api/user/indicators", verifyToken, async (req, res) => {
 
 app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
   try {
-    const q = await pool.query(
-      "SELECT id, first_name, last_name, email, role, is_banned FROM users ORDER BY created_at DESC"
-    );
+    const { search } = req.query;
+    let query = "SELECT id, first_name, last_name, email, role, is_banned FROM users";
+    let params = [];
+    
+    if (search) {
+      query += " WHERE first_name ILIKE $1 OR last_name ILIKE $1 OR email ILIKE $1";
+      params.push(`%${search}%`);
+    }
+    
+    query += " ORDER BY created_at DESC";
+    
+    const q = await pool.query(query, params);
     res.json({ users: q.rows });
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch users" });
@@ -547,6 +477,22 @@ app.patch("/api/admin/users/:id/unban", verifyToken, requireAdmin, async (req, r
     res.json({ message: "User unbanned successfully" });
   } catch (err) {
     res.status(500).json({ message: "Failed to unban user" });
+  }
+});
+
+app.patch("/api/admin/users/:id/role", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { role } = req.body;
+    if (!['admin', 'user'].includes(role)) {
+      return res.status(400).json({ message: "Invalid role" });
+    }
+    if (req.params.id === req.userId) {
+      return res.status(400).json({ message: "You cannot change your own role." });
+    }
+    await pool.query("UPDATE users SET role = $1 WHERE id = $2", [role, req.params.id]);
+    res.json({ message: `User role updated to ${role}` });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to update role" });
   }
 });
 
@@ -587,14 +533,12 @@ app.post("/api/posts", verifyToken, async (req, res) => {
 app.delete("/api/posts/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
-
     if (req.userRole === 'admin') {
       await pool.query("DELETE FROM posts WHERE id = $1", [id]);
     } else {
       const del = await pool.query("DELETE FROM posts WHERE id = $1 AND user_id = $2 RETURNING id", [id, req.userId]);
       if (del.rowCount === 0) return res.status(403).json({ message: "Unauthorized or post not found" });
     }
-
     res.json({ message: "Post deleted successfully" });
   } catch (err) {
     res.status(500).json({ message: "Failed to delete post" });
@@ -634,9 +578,7 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
       salaryRange, jobType, experienceLevel, expiresAt
     } = req.body;
 
-    if (!title || !company || !description) {
-      return res.status(400).json({ message: "Title, company, and description are required" });
-    }
+    if (!title || !company || !description) return res.status(400).json({ message: "Title, company, and description are required" });
 
     const q = await pool.query(
       `INSERT INTO jobs (
@@ -659,7 +601,11 @@ app.delete("/api/jobs/:jobId", verifyToken, async (req, res) => {
     const jobCheck = await pool.query("SELECT posted_by FROM jobs WHERE id = $1", [jobId]);
 
     if (jobCheck.rows.length === 0) return res.status(404).json({ message: "Job not found" });
-    if (jobCheck.rows[0].posted_by !== req.userId) return res.status(403).json({ message: "Unauthorized" });
+    
+    // Check if the user is the poster OR an admin
+    if (req.userRole !== 'admin' && jobCheck.rows[0].posted_by !== req.userId) {
+      return res.status(403).json({ message: "Unauthorized to delete this job" });
+    }
 
     await pool.query("DELETE FROM jobs WHERE id = $1", [jobId]);
     res.json({ message: "Job deleted successfully" });
@@ -672,11 +618,7 @@ app.post("/api/jobs/:jobId/apply", verifyToken, async (req, res) => {
   try {
     const { jobId } = req.params;
     const { coverLetter, resume, phone, linkedinUrl } = req.body;
-
-    const existing = await pool.query(
-      "SELECT id FROM job_applications WHERE job_id = $1 AND applicant_id = $2",
-      [jobId, req.userId]
-    );
+    const existing = await pool.query("SELECT id FROM job_applications WHERE job_id = $1 AND applicant_id = $2", [jobId, req.userId]);
 
     if (existing.rows.length > 0) return res.status(409).json({ message: "You have already applied to this job" });
 
@@ -688,7 +630,6 @@ app.post("/api/jobs/:jobId/apply", verifyToken, async (req, res) => {
       `INSERT INTO job_applications (job_id, applicant_id, cover_letter, resume_url) VALUES ($1, $2, $3, $4) RETURNING *`,
       [jobId, req.userId, finalCoverLetter, resume]
     );
-
     res.status(201).json({ application: result.rows[0], message: "Application submitted successfully" });
   } catch (err) {
     res.status(500).json({ message: "Failed to submit application" });
@@ -701,7 +642,7 @@ app.get("/api/jobs/:jobId/applications", verifyToken, async (req, res) => {
     const jobCheck = await pool.query("SELECT posted_by FROM jobs WHERE id = $1", [jobId]);
 
     if (jobCheck.rows.length === 0) return res.status(404).json({ message: "Job not found" });
-    if (jobCheck.rows[0].posted_by !== req.userId) return res.status(403).json({ message: "Unauthorized" });
+    if (req.userRole !== 'admin' && jobCheck.rows[0].posted_by !== req.userId) return res.status(403).json({ message: "Unauthorized" });
 
     const result = await pool.query(
       `SELECT ja.*, u.first_name, u.last_name, u.email, u.headline
@@ -725,7 +666,6 @@ app.post("/api/connections/:userId/request", verifyToken, async (req, res) => {
   try {
     const { userId } = req.params;
     const senderId = req.userId;
-
     if (userId === senderId) return res.status(400).json({ message: "Cannot connect with yourself" });
 
     const userCheck = await pool.query("SELECT id FROM users WHERE id = $1", [userId]);
@@ -747,7 +687,6 @@ app.post("/api/connections/:userId/request", verifyToken, async (req, res) => {
       `INSERT INTO connections (user_id, connected_user_id, status, created_at) VALUES ($1, $2, 'pending', NOW()) RETURNING *`,
       [senderId, userId]
     );
-
     res.status(201).json({ connection: result.rows[0], message: "Connection request sent" });
   } catch (err) {
     res.status(500).json({ message: "Failed to send connection request" });
@@ -803,7 +742,6 @@ app.post("/api/connections/:connectionId/accept", verifyToken, async (req, res) 
     const userId = req.userId;
 
     const connectionCheck = await pool.query("SELECT id, connected_user_id FROM connections WHERE id = $1", [connectionId]);
-
     if (connectionCheck.rows.length === 0) return res.status(404).json({ message: "Connection not found" });
     if (connectionCheck.rows[0].connected_user_id !== userId) return res.status(403).json({ message: "Unauthorized" });
 
@@ -820,7 +758,6 @@ app.delete("/api/connections/:connectionId/reject", verifyToken, async (req, res
     const userId = req.userId;
 
     const connectionCheck = await pool.query("SELECT id, connected_user_id FROM connections WHERE id = $1", [connectionId]);
-
     if (connectionCheck.rows.length === 0) return res.status(404).json({ message: "Connection not found" });
     if (connectionCheck.rows[0].connected_user_id !== userId) return res.status(403).json({ message: "Unauthorized" });
 
@@ -855,7 +792,6 @@ app.get("/api/connections/check/:userId", verifyToken, async (req, res) => {
       `SELECT status FROM connections WHERE (user_id = $1 AND connected_user_id = $2) OR (user_id = $2 AND connected_user_id = $1)`,
       [currentUserId, userId]
     );
-
     if (result.rows.length === 0) return res.json({ status: "not_connected" });
     res.json({ status: result.rows[0].status });
   } catch (err) {
@@ -871,11 +807,9 @@ app.post("/api/messages/room/:otherUserId", verifyToken, async (req, res) => {
   try {
     const currentUserId = req.userId;
     const { otherUserId } = req.params;
-
     const roomName = [currentUserId, otherUserId].sort().join('_');
 
     let roomCheck = await pool.query("SELECT * FROM chat_rooms WHERE name = $1 AND type = 'direct'", [roomName]);
-
     let room;
     if (roomCheck.rows.length === 0) {
       const newRoom = await pool.query(
@@ -888,7 +822,6 @@ app.post("/api/messages/room/:otherUserId", verifyToken, async (req, res) => {
     }
 
     const otherUser = await pool.query("SELECT id, first_name, last_name, profile_picture_url FROM users WHERE id = $1", [otherUserId]);
-
     res.json({ room, otherUser: otherUser.rows[0] });
   } catch (err) {
     res.status(500).json({ message: "Failed to load chat room" });
