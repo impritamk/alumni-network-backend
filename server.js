@@ -560,7 +560,7 @@ app.delete("/api/users/account", verifyToken, async (req, res) => {
   }
 });
 
-// 🟢 NEW FEATURE: NOTIFICATION DOT INDICATORS
+// 🟢 NEW FEATURE: NOTIFICATION DOT INDICATORS (Fixed array null checking)
 // ==========================================
 app.get("/api/user/indicators", verifyToken, async (req, res) => {
   try {
@@ -575,13 +575,13 @@ app.get("/api/user/indicators", verifyToken, async (req, res) => {
     );
     const hasNewJobs = parseInt(jobsQuery.rows[0].count) > 0;
 
-    // Check for unread messages (Where the sender is not the user, AND the user's ID is not in the read_by array)
+    // Check for unread messages (Null-safe array check)
     const msgsQuery = await pool.query(
       `SELECT COUNT(*) FROM chat_messages cm
        JOIN chat_rooms cr ON cm.room_id = cr.id
        WHERE cr.name LIKE $1 
        AND cm.sender_id != $2 
-       AND NOT ($2 = ANY(cm.read_by))`,
+       AND (cm.read_by IS NULL OR NOT ($2 = ANY(cm.read_by)))`,
       [`%${userId}%`, userId]
     );
     const hasUnreadMessages = parseInt(msgsQuery.rows[0].count) > 0;
@@ -940,7 +940,7 @@ app.post("/api/messages/room/:otherUserId", verifyToken, async (req, res) => {
       room = roomCheck.rows[0];
     }
 
-    const otherUser = await pool.query("SELECT id, first_name, last_name FROM users WHERE id = $1", [otherUserId]);
+    const otherUser = await pool.query("SELECT id, first_name, last_name, profile_picture_url FROM users WHERE id = $1", [otherUserId]);
 
     res.json({ room, otherUser: otherUser.rows[0] });
   } catch (err) {
@@ -953,13 +953,13 @@ app.get("/api/messages/:roomId", verifyToken, async (req, res) => {
     const { roomId } = req.params;
     const userId = req.userId;
     
-    // 🟢 NEW FEATURE: Flag messages as "Read" the moment the room is loaded
+    // 🟢 FIXED: Null-safe Array check when marking messages as read
     await pool.query(
       `UPDATE chat_messages 
-       SET read_by = array_append(read_by, $1) 
+       SET read_by = array_append(COALESCE(read_by, ARRAY[]::uuid[]), $1) 
        WHERE room_id = $2 
        AND sender_id != $1 
-       AND NOT ($1 = ANY(read_by))`,
+       AND (read_by IS NULL OR NOT ($1 = ANY(read_by)))`,
       [userId, roomId]
     );
 
@@ -998,7 +998,6 @@ app.post("/api/messages/:roomId", verifyToken, async (req, res) => {
   }
 });
 
-// 🟢 NEW FEATURE: Get a clean list of all active chats for the Inbox
 app.get("/api/inbox", verifyToken, async (req, res) => {
   try {
     const userId = req.userId;
@@ -1007,7 +1006,6 @@ app.get("/api/inbox", verifyToken, async (req, res) => {
       [`%${userId}%`]
     );
     
-    // Process the raw room names to figure out who the OTHER person in the chat is
     const inboxData = await Promise.all(rooms.rows.map(async (room) => {
       const ids = room.name.split('_');
       const otherUserId = ids[0] === userId ? ids[1] : ids[0];
@@ -1016,8 +1014,19 @@ app.get("/api/inbox", verifyToken, async (req, res) => {
         "SELECT id, first_name, last_name FROM users WHERE id = $1", 
         [otherUserId]
       );
+
+      // 🟢 NEW FEATURE: Check if THIS specific room has unread messages
+      const unreadQuery = await pool.query(
+        `SELECT COUNT(*) FROM chat_messages 
+         WHERE room_id = $1 
+         AND sender_id != $2 
+         AND (read_by IS NULL OR NOT ($2 = ANY(read_by)))`,
+        [room.id, userId]
+      );
       
-      return { room: room, otherUser: userRes.rows[0] };
+      const hasUnread = parseInt(unreadQuery.rows[0].count) > 0;
+      
+      return { room: room, otherUser: userRes.rows[0], hasUnread };
     }));
 
     res.json({ rooms: inboxData });
