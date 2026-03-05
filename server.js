@@ -523,9 +523,6 @@ app.put("/api/users/profile", verifyToken, async (req, res) => {
   try {
     const { headline, bio, location, company } = req.body;
 
-    console.log("📝 Updating profile for user:", req.userId);
-    console.log("Data received:", { headline, bio, location, company });
-
     const q = await pool.query(
       `UPDATE users SET
          headline = COALESCE($1, headline),
@@ -551,26 +548,47 @@ app.delete("/api/users/account", verifyToken, async (req, res) => {
   try {
     const userId = req.userId;
 
-    await pool.query(
-      "DELETE FROM job_applications WHERE applicant_id = $1",
-      [userId]
-    );
-
-    await pool.query(
-      "DELETE FROM jobs WHERE posted_by = $1",
-      [userId]
-    );
-
-    await pool.query(
-      "DELETE FROM users WHERE id = $1",
-      [userId]
-    );
+    await pool.query("DELETE FROM job_applications WHERE applicant_id = $1", [userId]);
+    await pool.query("DELETE FROM jobs WHERE posted_by = $1", [userId]);
+    await pool.query("DELETE FROM users WHERE id = $1", [userId]);
 
     console.log("✅ Account deleted:", userId);
     res.json({ message: "Account deleted successfully" });
   } catch (err) {
     console.error("❌ Delete account error:", err);
     res.status(500).json({ message: "Failed to delete account" });
+  }
+});
+
+// 🟢 NEW FEATURE: NOTIFICATION DOT INDICATORS
+// ==========================================
+app.get("/api/user/indicators", verifyToken, async (req, res) => {
+  try {
+    const userId = req.userId;
+    
+    // Check for any jobs posted AFTER the user's last login
+    const jobsQuery = await pool.query(
+      `SELECT COUNT(*) FROM jobs 
+       WHERE created_at > (SELECT COALESCE(last_login, '1970-01-01'::timestamp) FROM users WHERE id = $1)
+       AND posted_by != $1`,
+      [userId]
+    );
+    const hasNewJobs = parseInt(jobsQuery.rows[0].count) > 0;
+
+    // Check for unread messages (Where the sender is not the user, AND the user's ID is not in the read_by array)
+    const msgsQuery = await pool.query(
+      `SELECT COUNT(*) FROM chat_messages cm
+       JOIN chat_rooms cr ON cm.room_id = cr.id
+       WHERE cr.name LIKE $1 
+       AND cm.sender_id != $2 
+       AND NOT ($2 = ANY(cm.read_by))`,
+      [`%${userId}%`, userId]
+    );
+    const hasUnreadMessages = parseInt(msgsQuery.rows[0].count) > 0;
+
+    res.json({ hasNewJobs, hasUnreadMessages });
+  } catch (err) {
+    res.json({ hasNewJobs: false, hasUnreadMessages: false });
   }
 });
 
@@ -607,25 +625,13 @@ app.get("/api/jobs", verifyToken, async (req, res) => {
 
 app.post("/api/jobs", verifyToken, async (req, res) => {
   try {
-    console.log("📝 Creating job, user:", req.userId);
-    console.log("Request body:", req.body);
-    
     const {
-      title,
-      company,
-      description,
-      requirements,
-      location,
-      salaryRange,
-      jobType,
-      experienceLevel,
-      expiresAt
+      title, company, description, requirements, location,
+      salaryRange, jobType, experienceLevel, expiresAt
     } = req.body;
 
     if (!title || !company || !description) {
-      return res.status(400).json({ 
-        message: "Title, company, and description are required" 
-      });
+      return res.status(400).json({ message: "Title, company, and description are required" });
     }
 
     const q = await pool.query(
@@ -637,30 +643,15 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,NOW())
        RETURNING *`,
       [
-        req.userId,
-        title,
-        company,
-        description,
-        requirements || null,
-        location || null,
-        salaryRange || null,
-        jobType || null,
-        experienceLevel || null,
-        expiresAt || null
+        req.userId, title, company, description, requirements || null,
+        location || null, salaryRange || null, jobType || null,
+        experienceLevel || null, expiresAt || null
       ]
     );
 
-    console.log("✅ Job created with ID:", q.rows[0].id);
-    res.status(201).json({ 
-      job: q.rows[0], 
-      message: "Job posted successfully" 
-    });
+    res.status(201).json({ job: q.rows[0], message: "Job posted successfully" });
   } catch (err) {
-    console.error("❌ CREATE JOB ERROR:", err);
-    res.status(500).json({ 
-      message: "Failed to create job",
-      error: err.message
-    });
+    res.status(500).json({ message: "Failed to create job" });
   }
 });
 
@@ -668,25 +659,15 @@ app.delete("/api/jobs/:jobId", verifyToken, async (req, res) => {
   try {
     const { jobId } = req.params;
 
-    const jobCheck = await pool.query(
-      "SELECT posted_by FROM jobs WHERE id = $1",
-      [jobId]
-    );
+    const jobCheck = await pool.query("SELECT posted_by FROM jobs WHERE id = $1", [jobId]);
 
-    if (jobCheck.rows.length === 0) {
-      return res.status(404).json({ message: "Job not found" });
-    }
-
-    if (jobCheck.rows[0].posted_by !== req.userId) {
-      return res.status(403).json({ message: "You can only delete jobs you posted" });
-    }
+    if (jobCheck.rows.length === 0) return res.status(404).json({ message: "Job not found" });
+    if (jobCheck.rows[0].posted_by !== req.userId) return res.status(403).json({ message: "Unauthorized" });
 
     await pool.query("DELETE FROM jobs WHERE id = $1", [jobId]);
 
-    console.log("✅ Job deleted:", jobId);
     res.json({ message: "Job deleted successfully" });
   } catch (err) {
-    console.error("❌ Delete job error:", err);
     res.status(500).json({ message: "Failed to delete job" });
   }
 });
@@ -709,14 +690,10 @@ app.post("/api/jobs/:jobId/apply", verifyToken, async (req, res) => {
       return res.status(409).json({ message: "You have already applied to this job" });
     }
 
-    // 🟢 NEW FEATURE: DB Compatibility Workaround
-    // The DB schema doesn't have columns for phone or LinkedIn, so we safely attach them 
-    // to the cover letter text to make sure the employer still gets the information!
     let finalCoverLetter = coverLetter || "";
     if (phone) finalCoverLetter += `\n\nPhone Number: ${phone}`;
     if (linkedinUrl) finalCoverLetter += `\nLinkedIn Profile: ${linkedinUrl}`;
 
-    // 🟢 FIXED SQL QUERY: Matched exactly to the database schema
     const result = await pool.query(
       `INSERT INTO job_applications (
         job_id, applicant_id, cover_letter, resume_url
@@ -725,11 +702,7 @@ app.post("/api/jobs/:jobId/apply", verifyToken, async (req, res) => {
       [jobId, req.userId, finalCoverLetter, resume]
     );
 
-    console.log("✅ Application submitted:", result.rows[0].id);
-    res.status(201).json({ 
-      application: result.rows[0],
-      message: "Application submitted successfully" 
-    });
+    res.status(201).json({ application: result.rows[0], message: "Application submitted successfully" });
   } catch (err) {
     console.error("❌ Apply job error:", err);
     res.status(500).json({ message: "Failed to submit application" });
@@ -740,36 +713,22 @@ app.get("/api/jobs/:jobId/applications", verifyToken, async (req, res) => {
   try {
     const { jobId } = req.params;
 
-    const jobCheck = await pool.query(
-      "SELECT posted_by FROM jobs WHERE id = $1",
-      [jobId]
-    );
+    const jobCheck = await pool.query("SELECT posted_by FROM jobs WHERE id = $1", [jobId]);
 
-    if (jobCheck.rows.length === 0) {
-      return res.status(404).json({ message: "Job not found" });
-    }
-
-    if (jobCheck.rows[0].posted_by !== req.userId) {
-      return res.status(403).json({ message: "You can only view applications for your own jobs" });
-    }
+    if (jobCheck.rows.length === 0) return res.status(404).json({ message: "Job not found" });
+    if (jobCheck.rows[0].posted_by !== req.userId) return res.status(403).json({ message: "Unauthorized" });
 
     const result = await pool.query(
-      `SELECT 
-        ja.*,
-        u.first_name,
-        u.last_name,
-        u.email,
-        u.headline
+      `SELECT ja.*, u.first_name, u.last_name, u.email, u.headline
       FROM job_applications ja
       JOIN users u ON ja.applicant_id = u.id
       WHERE ja.job_id = $1
-      ORDER BY ja.applied_at DESC`, // 🟢 FIXED: Changed created_at to applied_at
+      ORDER BY ja.applied_at DESC`,
       [jobId]
     );
 
     res.json({ applications: result.rows });
   } catch (err) {
-    console.error("❌ Get applications error:", err);
     res.status(500).json({ message: "Failed to fetch applications" });
   }
 });
@@ -792,7 +751,6 @@ app.get("/api/events", verifyToken, async (req, res) => {
 
     res.json({ events: q.rows });
   } catch (err) {
-    console.error("❌ Events error:", err);
     res.status(500).json({ message: "Failed to fetch events" });
   }
 });
@@ -806,18 +764,10 @@ app.post("/api/connections/:userId/request", verifyToken, async (req, res) => {
     const { userId } = req.params;
     const senderId = req.userId;
 
-    if (userId === senderId) {
-      return res.status(400).json({ message: "Cannot connect with yourself" });
-    }
+    if (userId === senderId) return res.status(400).json({ message: "Cannot connect with yourself" });
 
-    const userCheck = await pool.query(
-      "SELECT id FROM users WHERE id = $1",
-      [userId]
-    );
-
-    if (userCheck.rows.length === 0) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    const userCheck = await pool.query("SELECT id FROM users WHERE id = $1", [userId]);
+    if (userCheck.rows.length === 0) return res.status(404).json({ message: "User not found" });
 
     const existingConnection = await pool.query(
       `SELECT id, status FROM connections 
@@ -828,11 +778,8 @@ app.post("/api/connections/:userId/request", verifyToken, async (req, res) => {
 
     if (existingConnection.rows.length > 0) {
       const status = existingConnection.rows[0].status;
-      if (status === "accepted") {
-        return res.status(409).json({ message: "Already connected" });
-      } else if (status === "pending") {
-        return res.status(409).json({ message: "Connection request already sent" });
-      }
+      if (status === "accepted") return res.status(409).json({ message: "Already connected" });
+      if (status === "pending") return res.status(409).json({ message: "Connection request already sent" });
     }
 
     const result = await pool.query(
@@ -842,13 +789,8 @@ app.post("/api/connections/:userId/request", verifyToken, async (req, res) => {
       [senderId, userId]
     );
 
-    console.log("✅ Connection request sent:", result.rows[0].id);
-    res.status(201).json({ 
-      connection: result.rows[0],
-      message: "Connection request sent" 
-    });
+    res.status(201).json({ connection: result.rows[0], message: "Connection request sent" });
   } catch (err) {
-    console.error("❌ Send connection request error:", err);
     res.status(500).json({ message: "Failed to send connection request" });
   }
 });
@@ -859,29 +801,11 @@ app.get("/api/connections", verifyToken, async (req, res) => {
     const { status = "accepted" } = req.query;
 
     let query = `
-      SELECT 
-        c.id as connection_id,
-        c.user_id,
-        c.connected_user_id,
-        c.status,
-        c.created_at,
-        CASE 
-          WHEN c.user_id = $1 THEN c.connected_user_id
-          ELSE c.user_id
-        END as connected_to,
-        u.id,
-        u.first_name,
-        u.last_name,
-        u.headline,
-        u.email,
-        u.passout_year
+      SELECT c.id as connection_id, c.user_id, c.connected_user_id, c.status, c.created_at,
+        CASE WHEN c.user_id = $1 THEN c.connected_user_id ELSE c.user_id END as connected_to,
+        u.id, u.first_name, u.last_name, u.headline, u.email, u.passout_year
       FROM connections c
-      JOIN users u ON (
-        CASE 
-          WHEN c.user_id = $1 THEN c.connected_user_id = u.id
-          ELSE c.user_id = u.id
-        END
-      )
+      JOIN users u ON (CASE WHEN c.user_id = $1 THEN c.connected_user_id = u.id ELSE c.user_id = u.id END)
       WHERE (c.user_id = $1 OR c.connected_user_id = $1)
     `;
 
@@ -897,7 +821,6 @@ app.get("/api/connections", verifyToken, async (req, res) => {
     const result = await pool.query(query, params);
     res.json({ connections: result.rows });
   } catch (err) {
-    console.error("❌ Get connections error:", err);
     res.status(500).json({ message: "Failed to fetch connections" });
   }
 });
@@ -907,16 +830,8 @@ app.get("/api/connections/pending-requests", verifyToken, async (req, res) => {
     const userId = req.userId;
 
     const result = await pool.query(
-      `SELECT 
-        c.id as connection_id,
-        c.user_id,
-        c.created_at,
-        u.id,
-        u.first_name,
-        u.last_name,
-        u.headline,
-        u.email,
-        u.passout_year
+      `SELECT c.id as connection_id, c.user_id, c.created_at,
+        u.id, u.first_name, u.last_name, u.headline, u.email, u.passout_year
       FROM connections c
       JOIN users u ON c.user_id = u.id
       WHERE c.connected_user_id = $1 AND c.status = 'pending'
@@ -924,12 +839,8 @@ app.get("/api/connections/pending-requests", verifyToken, async (req, res) => {
       [userId]
     );
 
-    res.json({ 
-      pending: result.rows,
-      count: result.rows.length 
-    });
+    res.json({ pending: result.rows, count: result.rows.length });
   } catch (err) {
-    console.error("❌ Get pending requests error:", err);
     res.status(500).json({ message: "Failed to fetch pending requests" });
   }
 });
@@ -939,31 +850,15 @@ app.post("/api/connections/:connectionId/accept", verifyToken, async (req, res) 
     const { connectionId } = req.params;
     const userId = req.userId;
 
-    const connectionCheck = await pool.query(
-      "SELECT id, connected_user_id FROM connections WHERE id = $1",
-      [connectionId]
-    );
+    const connectionCheck = await pool.query("SELECT id, connected_user_id FROM connections WHERE id = $1", [connectionId]);
 
-    if (connectionCheck.rows.length === 0) {
-      return res.status(404).json({ message: "Connection not found" });
-    }
+    if (connectionCheck.rows.length === 0) return res.status(404).json({ message: "Connection not found" });
+    if (connectionCheck.rows[0].connected_user_id !== userId) return res.status(403).json({ message: "Unauthorized" });
 
-    if (connectionCheck.rows[0].connected_user_id !== userId) {
-      return res.status(403).json({ message: "Unauthorized" });
-    }
+    const result = await pool.query(`UPDATE connections SET status = 'accepted', updated_at = NOW() WHERE id = $1 RETURNING *`, [connectionId]);
 
-    const result = await pool.query(
-      `UPDATE connections SET status = 'accepted', updated_at = NOW() WHERE id = $1 RETURNING *`,
-      [connectionId]
-    );
-
-    console.log("✅ Connection accepted:", connectionId);
-    res.json({ 
-      connection: result.rows[0],
-      message: "Connection accepted" 
-    });
+    res.json({ connection: result.rows[0], message: "Connection accepted" });
   } catch (err) {
-    console.error("❌ Accept connection error:", err);
     res.status(500).json({ message: "Failed to accept connection" });
   }
 });
@@ -973,28 +868,14 @@ app.delete("/api/connections/:connectionId/reject", verifyToken, async (req, res
     const { connectionId } = req.params;
     const userId = req.userId;
 
-    const connectionCheck = await pool.query(
-      "SELECT id, connected_user_id FROM connections WHERE id = $1",
-      [connectionId]
-    );
+    const connectionCheck = await pool.query("SELECT id, connected_user_id FROM connections WHERE id = $1", [connectionId]);
 
-    if (connectionCheck.rows.length === 0) {
-      return res.status(404).json({ message: "Connection not found" });
-    }
+    if (connectionCheck.rows.length === 0) return res.status(404).json({ message: "Connection not found" });
+    if (connectionCheck.rows[0].connected_user_id !== userId) return res.status(403).json({ message: "Unauthorized" });
 
-    if (connectionCheck.rows[0].connected_user_id !== userId) {
-      return res.status(403).json({ message: "Unauthorized" });
-    }
-
-    await pool.query(
-      "DELETE FROM connections WHERE id = $1",
-      [connectionId]
-    );
-
-    console.log("✅ Connection rejected:", connectionId);
+    await pool.query("DELETE FROM connections WHERE id = $1", [connectionId]);
     res.json({ message: "Connection request rejected" });
   } catch (err) {
-    console.error("❌ Reject connection error:", err);
     res.status(500).json({ message: "Failed to reject connection" });
   }
 });
@@ -1006,15 +887,12 @@ app.delete("/api/connections/:userId", verifyToken, async (req, res) => {
 
     await pool.query(
       `DELETE FROM connections 
-       WHERE (user_id = $1 AND connected_user_id = $2) 
-          OR (user_id = $2 AND connected_user_id = $1)`,
+       WHERE (user_id = $1 AND connected_user_id = $2) OR (user_id = $2 AND connected_user_id = $1)`,
       [currentUserId, userId]
     );
 
-    console.log("✅ Connection removed");
     res.json({ message: "Connection removed" });
   } catch (err) {
-    console.error("❌ Remove connection error:", err);
     res.status(500).json({ message: "Failed to remove connection" });
   }
 });
@@ -1026,18 +904,14 @@ app.get("/api/connections/check/:userId", verifyToken, async (req, res) => {
 
     const result = await pool.query(
       `SELECT status FROM connections 
-       WHERE (user_id = $1 AND connected_user_id = $2) 
-          OR (user_id = $2 AND connected_user_id = $1)`,
+       WHERE (user_id = $1 AND connected_user_id = $2) OR (user_id = $2 AND connected_user_id = $1)`,
       [currentUserId, userId]
     );
 
-    if (result.rows.length === 0) {
-      return res.json({ status: "not_connected" });
-    }
+    if (result.rows.length === 0) return res.json({ status: "not_connected" });
 
     res.json({ status: result.rows[0].status });
   } catch (err) {
-    console.error("❌ Check connection status error:", err);
     res.status(500).json({ message: "Failed to check connection status" });
   }
 });
@@ -1053,16 +927,12 @@ app.post("/api/messages/room/:otherUserId", verifyToken, async (req, res) => {
 
     const roomName = [currentUserId, otherUserId].sort().join('_');
 
-    let roomCheck = await pool.query(
-      "SELECT * FROM chat_rooms WHERE name = $1 AND type = 'direct'",
-      [roomName]
-    );
+    let roomCheck = await pool.query("SELECT * FROM chat_rooms WHERE name = $1 AND type = 'direct'", [roomName]);
 
     let room;
     if (roomCheck.rows.length === 0) {
       const newRoom = await pool.query(
-        `INSERT INTO chat_rooms (name, type, created_by, created_at) 
-         VALUES ($1, 'direct', $2, NOW()) RETURNING *`,
+        `INSERT INTO chat_rooms (name, type, created_by, created_at) VALUES ($1, 'direct', $2, NOW()) RETURNING *`,
         [roomName, currentUserId]
       );
       room = newRoom.rows[0];
@@ -1070,14 +940,10 @@ app.post("/api/messages/room/:otherUserId", verifyToken, async (req, res) => {
       room = roomCheck.rows[0];
     }
 
-    const otherUser = await pool.query(
-      "SELECT id, first_name, last_name, profile_picture_url FROM users WHERE id = $1",
-      [otherUserId]
-    );
+    const otherUser = await pool.query("SELECT id, first_name, last_name FROM users WHERE id = $1", [otherUserId]);
 
     res.json({ room, otherUser: otherUser.rows[0] });
   } catch (err) {
-    console.error("❌ Room error:", err);
     res.status(500).json({ message: "Failed to load chat room" });
   }
 });
@@ -1085,7 +951,18 @@ app.post("/api/messages/room/:otherUserId", verifyToken, async (req, res) => {
 app.get("/api/messages/:roomId", verifyToken, async (req, res) => {
   try {
     const { roomId } = req.params;
+    const userId = req.userId;
     
+    // 🟢 NEW FEATURE: Flag messages as "Read" the moment the room is loaded
+    await pool.query(
+      `UPDATE chat_messages 
+       SET read_by = array_append(read_by, $1) 
+       WHERE room_id = $2 
+       AND sender_id != $1 
+       AND NOT ($1 = ANY(read_by))`,
+      [userId, roomId]
+    );
+
     const messages = await pool.query(
       `SELECT m.*, u.first_name, u.last_name 
        FROM chat_messages m
@@ -1097,7 +974,6 @@ app.get("/api/messages/:roomId", verifyToken, async (req, res) => {
 
     res.json({ messages: messages.rows });
   } catch (err) {
-    console.error("❌ Get messages error:", err);
     res.status(500).json({ message: "Failed to fetch messages" });
   }
 });
@@ -1118,11 +994,11 @@ app.post("/api/messages/:roomId", verifyToken, async (req, res) => {
 
     res.json({ message: newMsg.rows[0] });
   } catch (err) {
-    console.error("❌ Send message error:", err);
     res.status(500).json({ message: "Failed to send message" });
   }
 });
 
+// 🟢 NEW FEATURE: Get a clean list of all active chats for the Inbox
 app.get("/api/inbox", verifyToken, async (req, res) => {
   try {
     const userId = req.userId;
@@ -1130,7 +1006,21 @@ app.get("/api/inbox", verifyToken, async (req, res) => {
       `SELECT * FROM chat_rooms WHERE name LIKE $1 ORDER BY created_at DESC`,
       [`%${userId}%`]
     );
-    res.json({ rooms: rooms.rows });
+    
+    // Process the raw room names to figure out who the OTHER person in the chat is
+    const inboxData = await Promise.all(rooms.rows.map(async (room) => {
+      const ids = room.name.split('_');
+      const otherUserId = ids[0] === userId ? ids[1] : ids[0];
+      
+      const userRes = await pool.query(
+        "SELECT id, first_name, last_name FROM users WHERE id = $1", 
+        [otherUserId]
+      );
+      
+      return { room: room, otherUser: userRes.rows[0] };
+    }));
+
+    res.json({ rooms: inboxData });
   } catch (err) {
     res.status(500).json({ message: "Failed to load inbox" });
   }
