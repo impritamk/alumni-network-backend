@@ -47,10 +47,9 @@ app.use(express.urlencoded({ extended: true }));
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 800, // 🟢 CHANGED THIS FROM 100 TO 800
 });
 app.use("/api/", limiter);
-
 // --------------------------
 // UTILS
 // --------------------------
@@ -1048,3 +1047,4 @@ app.use((err, req, res, next) => {
 // ==========================================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
