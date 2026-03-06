@@ -537,6 +537,29 @@ app.post("/api/messages/:roomId", verifyToken, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Failed to send message" }); }
 });
 
+app.delete("/api/messages/room/:roomId", verifyToken, async (req, res) => {
+  try {
+    // Ensure the user actually belongs to this room before deleting
+    const roomCheck = await pool.query(
+      "SELECT id FROM chat_rooms WHERE id = $1 AND name LIKE $2", 
+      [req.params.roomId, `%${req.userId}%`]
+    );
+    
+    if (roomCheck.rows.length === 0) {
+      return res.status(403).json({ message: "Unauthorized or room not found" });
+    }
+
+    // Deleting the room will automatically delete the messages if you have ON DELETE CASCADE in your DB.
+    // If not, delete messages manually first:
+    await pool.query("DELETE FROM chat_messages WHERE room_id = $1", [req.params.roomId]);
+    await pool.query("DELETE FROM chat_rooms WHERE id = $1", [req.params.roomId]);
+    
+    res.json({ message: "Chat deleted successfully" });
+  } catch (err) { 
+    res.status(500).json({ message: "Failed to delete chat" }); 
+  }
+});
+
 // 🟢 FIXED: Inbox sorting and safe ID comparison
 app.get("/api/inbox", verifyToken, async (req, res) => {
   try {
@@ -565,3 +588,4 @@ app.get("/api/inbox", verifyToken, async (req, res) => {
 app.use((err, req, res, next) => { console.error("❌ Error:", err); res.status(500).json({ message: "Server error" }); });
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
