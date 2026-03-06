@@ -531,10 +531,16 @@ app.get("/api/messages/:roomId", verifyToken, async (req, res) => {
 app.post("/api/messages/:roomId", verifyToken, async (req, res) => {
   try {
     if (!req.body.message.trim()) return res.status(400).json({ message: "Message cannot be empty" });
+    
+    // 1. Save message to PostgreSQL (Your existing code)
     const newMsg = await pool.query(
       `INSERT INTO chat_messages (room_id, sender_id, message, created_at) VALUES ($1, $2, $3, NOW()) RETURNING *`,
       [req.params.roomId, req.userId, req.body.message]
     );
+
+    // 2. THE MAGIC LINE: Broadcast the message instantly to the WebSocket room
+    req.app.get("io").to(req.params.roomId).emit("receiveMessage", newMsg.rows[0]);
+
     res.json({ message: newMsg.rows[0] });
   } catch (err) { res.status(500).json({ message: "Failed to send message" }); }
 });
@@ -616,5 +622,6 @@ io.on("connection", (socket) => {
 
 // 5. Start the server using 'server.listen' instead of 'app.listen'
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
 
 
