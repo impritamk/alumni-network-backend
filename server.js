@@ -55,10 +55,23 @@ async function sendOtpEmail(email, otp) {
 const verifyToken = (req, res, next) => {
   const auth = req.headers.authorization;
   if (!auth?.startsWith("Bearer ")) return res.status(401).json({ message: "Authentication required" });
+  
   try { 
     const decoded = jwt.verify(auth.split(" ")[1], process.env.JWT_SECRET); 
     req.userId = decoded.userId; 
     req.userRole = decoded.role; 
+    req.userEmail = decoded.email; // Save the email to check later
+
+    // --- NEW: GUEST LOCKDOWN LOGIC ---
+    // If the guest tries to do anything other than read data (GET)
+    if (req.userEmail === 'guest@example.com' && req.method !== 'GET') {
+      // Allow them to open a chat room (so the UI doesn't crash), but block everything else
+      if (!req.path.includes('/messages/room')) {
+        return res.status(403).json({ message: "Read-only mode. Guest accounts cannot modify data." });
+      }
+    }
+    // ---------------------------------
+
     next(); 
   } catch { 
     return res.status(401).json({ message: "Invalid token" }); 
@@ -622,6 +635,7 @@ io.on("connection", (socket) => {
 
 // 5. Start the server using 'server.listen' instead of 'app.listen'
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
 
 
 
