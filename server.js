@@ -198,7 +198,6 @@ app.get("/api/users/directory", verifyToken, async (req, res) => {
     const { search, passoutYear, limit = 50, offset = 0 } = req.query;
     // --- ADDED: "AND email != 'guest@example.com'" to hide the guest ---
     let query = `SELECT id, first_name, last_name, email, headline, passout_year, college_name, location, current_company as company FROM users WHERE verification_status = 'verified' AND is_banned = false AND email != 'alumninetworkplatform@gmail.com'`;
-    let query = `SELECT id, first_name, last_name, email, headline, passout_year, college_name, location, current_company as company FROM users WHERE verification_status = 'verified' AND is_banned = false`;
     const params = []; let i = 1;
     if (search) { query += ` AND (first_name ILIKE $${i} OR last_name ILIKE $${i} OR email ILIKE $${i})`; params.push(`%${search}%`); i++; }
     if (passoutYear) { query += ` AND passout_year = $${i}`; params.push(passoutYear); i++; }
@@ -637,6 +636,7 @@ io.on("connection", (socket) => {
 
 // 5. Start the server using 'server.listen' instead of 'app.listen'
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
 
 
 
