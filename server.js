@@ -64,7 +64,7 @@ const verifyToken = (req, res, next) => {
 
     // --- NEW: GUEST LOCKDOWN LOGIC ---
     // If the guest tries to do anything other than read data (GET)
-    if (req.userEmail === 'guest@example.com' && req.method !== 'GET') {
+    if (req.userEmail === 'alumninetworkplatform@gmail.com' && req.method !== 'GET') {
       // Allow them to open a chat room (so the UI doesn't crash), but block everything else
       if (!req.path.includes('/messages/room')) {
         return res.status(403).json({ message: "Read-only mode. Guest accounts cannot modify data." });
@@ -637,6 +637,7 @@ io.on("connection", (socket) => {
 
 // 5. Start the server using 'server.listen' instead of 'app.listen'
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
 
 
 
