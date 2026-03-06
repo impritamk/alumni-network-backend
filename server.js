@@ -41,11 +41,31 @@ function generateOtpAndExpiry(minutes = 10) {
 
 async function sendOtpEmail(email, otp) {
   try {
+    const emailHtml = `
+    <div style="font-family: 'Inter', Helvetica, Arial, sans-serif; background-color: #f8fafc; padding: 40px 20px; margin: 0;">
+      <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; padding: 40px 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); text-align: center;">
+        <h1 style="color: #2563eb; margin-top: 0; font-size: 26px; margin-bottom: 10px;">Connect Alumni</h1>
+        <p style="color: #475569; font-size: 16px; line-height: 1.6; margin-bottom: 30px;">
+          Welcome to the Chaibasa Engineering College Alumni Network! Please use the verification code below to complete your registration.
+        </p>
+        
+        <div style="background-color: #f1f5f9; border-radius: 8px; padding: 20px; margin-bottom: 30px;">
+          <span style="font-size: 36px; font-weight: bold; letter-spacing: 10px; color: #0f172a; display: block; margin-left: 10px;">${otp}</span>
+        </div>
+        
+        <p style="color: #64748b; font-size: 14px;">This code will expire in <strong>10 minutes</strong>.</p>
+        
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
+        <p style="color: #94a3b8; font-size: 12px; margin: 0;">If you did not request this email, you can safely ignore it. No account will be created.</p>
+      </div>
+    </div>
+    `;
+
     await axios.post("https://api.brevo.com/v3/smtp/email", {
-      sender: { email: process.env.FROM_EMAIL, name: "Alumni Network" },
+      sender: { email: process.env.FROM_EMAIL, name: "Connect Alumni" },
       to: [{ email }],
-      subject: "🎓 Verify Your Email",
-      htmlContent: `<div style="font-family:Arial; padding:20px;"><h2>Alumni Network</h2><p>Your OTP is: <b>${otp}</b> (Valid for 10 min)</p></div>`
+      subject: "🎓 Verify Your Email - Connect Alumni",
+      htmlContent: emailHtml
     }, { headers: { "api-key": process.env.BREVO_API_KEY } });
   } catch (err) { 
     console.error("❌ OTP Email Error:", err.message); 
@@ -155,11 +175,31 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     const resetToken = jwt.sign({ userId, type: "reset" }, process.env.JWT_SECRET, { expiresIn: "1h" });
     await pool.query("UPDATE users SET reset_token = $1, reset_token_expires = NOW() + INTERVAL '1 hour' WHERE id = $2", [resetToken, userId]);
     const resetLink = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
+    const resetHtml = `
+    <div style="font-family: 'Inter', Helvetica, Arial, sans-serif; background-color: #f8fafc; padding: 40px 20px; margin: 0;">
+      <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; padding: 40px 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05); text-align: center;">
+        <h1 style="color: #2563eb; margin-top: 0; font-size: 26px; margin-bottom: 10px;">Connect Alumni</h1>
+        <p style="color: #475569; font-size: 16px; line-height: 1.6; margin-bottom: 30px;">
+          We received a request to reset the password for your account. Click the button below to choose a new password.
+        </p>
+        
+        <a href="${resetLink}" style="display: inline-block; background-color: #2563eb; color: #ffffff; font-weight: 600; font-size: 16px; text-decoration: none; padding: 14px 28px; border-radius: 8px; margin-bottom: 30px;">
+          Reset My Password
+        </a>
+        
+        <p style="color: #64748b; font-size: 14px;">This link will expire in <strong>1 hour</strong>.</p>
+        
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;" />
+        <p style="color: #94a3b8; font-size: 12px; margin: 0;">If you did not request a password reset, please ignore this email or contact support if you have concerns.</p>
+      </div>
+    </div>
+    `;
+
     await axios.post("https://api.brevo.com/v3/smtp/email", {
-      sender: { email: process.env.FROM_EMAIL, name: "Alumni Network" },
+      sender: { email: process.env.FROM_EMAIL, name: "Connect Alumni" },
       to: [{ email }],
-      subject: "🔐 Reset Your Password",
-      htmlContent: `<p>Click here to reset your password: <a href="${resetLink}">Reset Password</a></p>`
+      subject: "🔐 Reset Your Password - Connect Alumni",
+      htmlContent: resetHtml
     }, { headers: { "api-key": process.env.BREVO_API_KEY } });
     res.json({ message: "Password reset link sent to your email" });
   } catch (err) { res.status(500).json({ message: "Failed to send reset link" }); }
@@ -636,6 +676,7 @@ io.on("connection", (socket) => {
 
 // 5. Start the server using 'server.listen' instead of 'app.listen'
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
 
 
 
