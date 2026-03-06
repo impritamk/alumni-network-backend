@@ -1,4 +1,6 @@
 const express = require("express");
+const http = require("http");             // <-- Added this
+const { Server } = require("socket.io");  // <-- Added this
 const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
@@ -586,6 +588,33 @@ app.get("/api/inbox", verifyToken, async (req, res) => {
 });
 
 app.use((err, req, res, next) => { console.error("❌ Error:", err); res.status(500).json({ message: "Server error" }); });
+
+// --- ALL YOUR EXISTING ROUTES STAY ABOVE THIS LINE ---
+
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
+// 1. Wrap your Express app in an HTTP server
+const server = http.createServer(app);
+
+// 2. Attach Socket.io to that new server
+const io = new Server(server, {
+  cors: {
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    credentials: true,
+  }
+});
+
+// 3. Make 'io' available inside your Express routes
+app.set("io", io);
+
+// 4. Listen for when users connect to the chat
+io.on("connection", (socket) => {
+  socket.on("joinRoom", (roomId) => {
+    socket.join(roomId);
+  });
+});
+
+// 5. Start the server using 'server.listen' instead of 'app.listen'
+server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
 
