@@ -672,10 +672,22 @@ io.on("connection", (socket) => {
   socket.on("joinRoom", (roomId) => {
     socket.join(roomId);
   });
+
+  // --- NEW: TYPING INDICATORS ---
+  socket.on("typing", (roomId) => {
+    // Broadcast to everyone in the room EXCEPT the sender
+    socket.to(roomId).emit("userTyping"); 
+  });
+
+  socket.on("stopTyping", (roomId) => {
+    socket.to(roomId).emit("userStoppedTyping");
+  });
+  // ------------------------------
 });
 
 // 5. Start the server using 'server.listen' instead of 'app.listen'
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
 
 
 
