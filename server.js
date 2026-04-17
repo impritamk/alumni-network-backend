@@ -345,6 +345,34 @@ app.patch("/api/admin/users/:id/role", verifyToken, requireAdmin, async (req, re
   await pool.query("UPDATE users SET role = $1 WHERE id = $2", [req.body.role, req.params.id]); res.json({ message: `Role updated` }); 
 });
 
+app.post("/api/admin/broadcast-email", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { subject, message, targetEmail } = req.body;
+
+    // If you pass a specific email, send it just to them
+    if (targetEmail) {
+      const targetUser = await pool.query("SELECT email, first_name FROM users WHERE email = $1", [targetEmail]);
+      if (targetUser.rows.length === 0) return res.status(404).json({ message: "User not found" });
+      
+      await sendNotificationEmail(targetUser.rows[0].email, targetUser.rows[0].first_name, subject, message);
+      return res.json({ message: `Manual email sent to ${targetEmail}!` });
+    } 
+    
+    // If no target email is passed, send to EVERY verified user (Use carefully!)
+    const allUsers = await pool.query("SELECT email, first_name FROM users WHERE verification_status = 'verified'");
+    
+    for (const user of allUsers.rows) {
+      // Sending without 'await' so the loop runs fast and happens in the background
+      sendNotificationEmail(user.email, user.first_name, subject, message);
+    }
+
+    res.json({ message: `Manual email broadcasted to ${allUsers.rows.length} users!` });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to send manual emails" });
+  }
+});
+
 // ==========================================
 //          FEED (POSTS, LIKES, COMMENTS)
 // ==========================================
