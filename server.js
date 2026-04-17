@@ -345,6 +345,7 @@ app.patch("/api/admin/users/:id/role", verifyToken, requireAdmin, async (req, re
   await pool.query("UPDATE users SET role = $1 WHERE id = $2", [req.body.role, req.params.id]); res.json({ message: `Role updated` }); 
 });
 
+// 👇 PASTE THIS NEW ROUTE HERE 👇
 app.post("/api/admin/broadcast-email", verifyToken, requireAdmin, async (req, res) => {
   try {
     const { subject, message, targetEmail } = req.body;
@@ -358,11 +359,10 @@ app.post("/api/admin/broadcast-email", verifyToken, requireAdmin, async (req, re
       return res.json({ message: `Manual email sent to ${targetEmail}!` });
     } 
     
-    // If no target email is passed, send to EVERY verified user (Use carefully!)
+    // If no target email is passed, send to EVERY verified user
     const allUsers = await pool.query("SELECT email, first_name FROM users WHERE verification_status = 'verified'");
     
     for (const user of allUsers.rows) {
-      // Sending without 'await' so the loop runs fast and happens in the background
       sendNotificationEmail(user.email, user.first_name, subject, message);
     }
 
@@ -372,6 +372,7 @@ app.post("/api/admin/broadcast-email", verifyToken, requireAdmin, async (req, re
     res.status(500).json({ message: "Failed to send manual emails" });
   }
 });
+// 👆 -------------------------- 👆
 
 // ==========================================
 //          FEED (POSTS, LIKES, COMMENTS)
