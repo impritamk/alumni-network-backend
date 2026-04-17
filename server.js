@@ -669,19 +669,23 @@ app.post("/api/messages/:roomId", verifyToken, async (req, res) => {
   try {
     if (!req.body.message.trim()) return res.status(400).json({ message: "Message cannot be empty" });
     
-    // 1. Save message to PostgreSQL (Your existing code)
+    // 1. Save message to PostgreSQL
     const newMsg = await pool.query(
       `INSERT INTO chat_messages (room_id, sender_id, message, created_at) VALUES ($1, $2, $3, NOW()) RETURNING *`,
       [req.params.roomId, req.userId, req.body.message]
     );
 
-    // 2. THE MAGIC LINE: Broadcast the message instantly to the WebSocket room
+    // 2. Broadcast the message instantly to the WebSocket room
     req.app.get("io").to(req.params.roomId).emit("receiveMessage", newMsg.rows[0]);
 
-    res.json({ message: newMsg.rows[0] });
-  } catch (err) { res.status(500).json({ message: "Failed to send message" }); }
-});
+    // Note: Instant email notifications for messages are disabled to save API quota.
+    // The frontend will still show the red "Unread Message" dot thanks to the WebSocket!
 
+    res.json({ message: newMsg.rows[0] });
+  } catch (err) { 
+    res.status(500).json({ message: "Failed to send message" }); 
+  }
+});
 app.delete("/api/messages/room/:roomId", verifyToken, async (req, res) => {
   try {
     // Ensure the user actually belongs to this room before deleting
