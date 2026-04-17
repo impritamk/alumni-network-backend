@@ -72,6 +72,31 @@ async function sendOtpEmail(email, otp) {
   }
 }
 
+async function sendNotificationEmail(email, name, subject, content) {
+  try {
+    const emailHtml = `
+    <div style="font-family: 'Inter', Helvetica, Arial, sans-serif; padding: 30px; background-color: #f8fafc;">
+      <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; padding: 30px; border-radius: 8px;">
+        <h2 style="color: #0f172a; margin-top: 0;">Hi ${name},</h2>
+        <p style="color: #475569; font-size: 16px; line-height: 1.6;">${content}</p>
+        <a href="${process.env.FRONTEND_URL}" style="display: inline-block; background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 15px; font-weight: bold;">
+          Open ConnectAlumni
+        </a>
+      </div>
+    </div>
+    `;
+
+    await axios.post("https://api.brevo.com/v3/smtp/email", {
+      sender: { email: process.env.FROM_EMAIL, name: "Connect Alumni" },
+      to: [{ email }],
+      subject: subject,
+      htmlContent: emailHtml
+    }, { headers: { "api-key": process.env.BREVO_API_KEY } });
+  } catch (err) { 
+    console.error("❌ Notification Error:", err.message); 
+  }
+}
+
 const verifyToken = (req, res, next) => {
   const auth = req.headers.authorization;
   if (!auth?.startsWith("Bearer ")) return res.status(401).json({ message: "Authentication required" });
@@ -482,6 +507,20 @@ app.post("/api/connections/:userId/request", verifyToken, async (req, res) => {
     }
 
     const result = await pool.query(`INSERT INTO connections (user_id, connected_user_id, status, created_at) VALUES ($1, $2, 'pending', NOW()) RETURNING *`, [req.userId, userId]);
+    // --- NEW EMAIL TRIGGER LOGIC ---
+    // Fetch the target user's email and name directly from the database
+    const targetUser = await pool.query("SELECT email, first_name FROM users WHERE id = $1", [userId]);
+    
+    if (targetUser.rows.length > 0) {
+      // Send the email in the background (no await) so it doesn't slow down the user's UI
+      sendNotificationEmail(
+        targetUser.rows[0].email,
+        targetUser.rows[0].first_name,
+        "New Connection Request! 🤝",
+        "Someone just sent you a connection request on the Alumni Network. Log in to see who it is!"
+      );
+    }
+    // --------------------------------
     res.status(201).json({ connection: result.rows[0], message: "Connection request sent" });
   } catch (err) { res.status(500).json({ message: "Failed to send connection request" }); }
 });
