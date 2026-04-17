@@ -74,17 +74,21 @@ async function sendOtpEmail(email, otp) {
 
 async function sendNotificationEmail(email, name, subject, content) {
   try {
+    // 👇 THIS IS THE FORMAT OF THE EMAIL 👇
     const emailHtml = `
     <div style="font-family: 'Inter', Helvetica, Arial, sans-serif; padding: 30px; background-color: #f8fafc;">
       <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; padding: 30px; border-radius: 8px;">
         <h2 style="color: #0f172a; margin-top: 0;">Hi ${name},</h2>
+        
         <p style="color: #475569; font-size: 16px; line-height: 1.6;">${content}</p>
+        
         <a href="${process.env.FRONTEND_URL}" style="display: inline-block; background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 15px; font-weight: bold;">
           Open ConnectAlumni
         </a>
       </div>
     </div>
     `;
+    // 👆 -------------------------------- 👆
 
     await axios.post("https://api.brevo.com/v3/smtp/email", {
       sender: { email: process.env.FROM_EMAIL, name: "Connect Alumni" },
