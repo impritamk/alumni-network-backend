@@ -759,7 +759,22 @@ io.on("connection", (socket) => {
   socket.on("joinRoom", (roomId) => {
     socket.join(roomId);
   });
-
+  // 👇 PASTE THIS NEW BLOCK RIGHT HERE 👇
+  socket.on("markAsRead", async ({ roomId, userId }) => {
+    try {
+      // Update the database to mark messages as read
+      await pool.query(
+        "UPDATE chat_messages SET read_status = 'read' WHERE room_id = $1 AND sender_id != $2 AND read_status != 'read'", 
+        [roomId, userId]
+      );
+      
+      // Tell everyone in the room to update their UI
+      io.to(roomId).emit("messagesRead", { roomId, readerId: userId });
+    } catch (err) {
+      console.error("Failed to mark messages as read", err);
+    }
+  });
+  // 👆 -------------------------------- 👆
   // --- NEW: TYPING INDICATORS ---
   socket.on("typing", (roomId) => {
     // Broadcast to everyone in the room EXCEPT the sender
@@ -774,13 +789,3 @@ io.on("connection", (socket) => {
 
 // 5. Start the server using 'server.listen' instead of 'app.listen'
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-
-
-
-
-
-
-
-
-
-
