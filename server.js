@@ -10,6 +10,24 @@ const jwt = require("jsonwebtoken");
 const axios = require("axios");
 require("dotenv").config();
 
+const { body, validationResult } = require("express-validator");
+
+// ==========================================
+//    VALIDATION MIDDLEWARE
+// ==========================================
+// This checks if any of our rules failed. If they did, it blocks the request.
+const validateRequest = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    // Send a 400 Bad Request with the specific errors
+    return res.status(400).json({ 
+      message: "Invalid input data provided.", 
+      errors: errors.array() 
+    });
+  }
+  next();
+};
+
 const app = express();
 app.set("trust proxy", 1);
 
@@ -135,24 +153,52 @@ const requireAdmin = (req, res, next) => {
 // ==========================================
 //               AUTH ROUTES
 // ==========================================
-app.post("/api/auth/register", async (req, res) => {
-  try {
-    const email = req.body.email?.toLowerCase().trim();
-    const { password, firstName, lastName, passoutYear, collegeName } = req.body;
-    if (!email || !password || !firstName) return res.status(400).json({ message: "Required fields missing" });
+app.post("/api/auth/register", 
+  [
+    body("email").isEmail().withMessage("Must be a valid email address").normalizeEmail(),
+    body("password").isLength({ min: 6 }).withMessage("Password must be at least 6 characters long"),
+    body("firstName").notEmpty().withMessage("First name is required").trim().escape(),
+    body("lastName").notEmpty().withMessage("Last name is required").trim().escape(),
+    body("passoutYear").isInt({ min: 1950, max: 2100 }).withMessage("Valid passout year required")
+  ],
+  validateRequest, 
+  async (req, res) => {
+    try {
+      const { email, password, firstName, lastName, passoutYear, collegeName } = req.body;
+      const hashedPassword = await bcrypt.hash(password, 12);
+      const { otp, expiry } = generateOtpAndExpiry();
 
-    const hashedPassword = await bcrypt.hash(password, 12);
-    const { otp, expiry } = generateOtpAndExpiry();
+      await pool.query(
+        `INSERT INTO users (email, password, first_name, last_name, passout_year, college_name, verification_status, otp, otp_expires, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,NOW(),NOW())
+         ON CONFLICT (email) DO UPDATE SET password=EXCLUDED.password, first_name=EXCLUDED.first_name, last_name=EXCLUDED.last_name, passout_year=EXCLUDED.passout_year, college_name=EXCLUDED.college_name, verification_status='pending', otp=EXCLUDED.otp, otp_expires=EXCLUDED.otp_expires, updated_at=NOW()`,
+        [email, hashedPassword, firstName, lastName, passoutYear, collegeName || 'Chaibasa Engineering College', otp, expiry]
+      );
+      await sendOtpEmail(email, otp);
+      res.json({ message: "OTP sent to email", email });
+    } catch (err) { res.status(500).json({ message: "Registration failed" }); }
+});
 
-    await pool.query(
-      `INSERT INTO users (email, password, first_name, last_name, passout_year, college_name, verification_status, otp, otp_expires, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,NOW(),NOW())
-       ON CONFLICT (email) DO UPDATE SET password=EXCLUDED.password, first_name=EXCLUDED.first_name, last_name=EXCLUDED.last_name, passout_year=EXCLUDED.passout_year, college_name=EXCLUDED.college_name, verification_status='pending', otp=EXCLUDED.otp, otp_expires=EXCLUDED.otp_expires, updated_at=NOW()`,
-      [email, hashedPassword, firstName, lastName, passoutYear, collegeName || 'Chaibasa Engineering College', otp, expiry]
-    );
-    await sendOtpEmail(email, otp);
-    res.json({ message: "OTP sent to email", email });
-  } catch (err) { res.status(500).json({ message: "Registration failed" }); }
+app.post("/api/auth/login", 
+  [
+    body("email").isEmail().withMessage("Must be a valid email").normalizeEmail(),
+    body("password").notEmpty().withMessage("Password is required")
+  ],
+  validateRequest,
+  async (req, res) => {
+    try {
+      const q = await pool.query("SELECT * FROM users WHERE email = $1", [req.body.email]);
+      if (q.rows.length === 0) return res.status(401).json({ message: "Invalid credentials" });
+      const user = q.rows[0];
+      if (user.is_banned) return res.status(403).json({ message: "Account banned." });
+      if (user.verification_status !== "verified") return res.status(403).json({ message: "Verify email first" });
+      if (!(await bcrypt.compare(req.body.password, user.password))) return res.status(401).json({ message: "Invalid credentials" });
+
+      await pool.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id]);
+      const token = jwt.sign({ userId: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+      delete user.password; 
+      res.json({ token, user });
+    } catch (err) { res.status(500).json({ message: "Login failed" }); }
 });
 
 app.post("/api/auth/verify-otp", async (req, res) => {
@@ -179,21 +225,6 @@ app.post("/api/auth/resend-otp", async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Failed to resend OTP" }); }
 });
 
-app.post("/api/auth/login", async (req, res) => {
-  try {
-    const q = await pool.query("SELECT * FROM users WHERE email = $1", [req.body.email?.toLowerCase().trim()]);
-    if (q.rows.length === 0) return res.status(401).json({ message: "Invalid credentials" });
-    const user = q.rows[0];
-    if (user.is_banned) return res.status(403).json({ message: "Account banned." });
-    if (user.verification_status !== "verified") return res.status(403).json({ message: "Verify email first" });
-    if (!(await bcrypt.compare(req.body.password, user.password))) return res.status(401).json({ message: "Invalid credentials" });
-
-    await pool.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id]);
-    const token = jwt.sign({ userId: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-    delete user.password; 
-    res.json({ token, user });
-  } catch (err) { res.status(500).json({ message: "Login failed" }); }
-});
 
 app.post("/api/auth/forgot-password", async (req, res) => {
   try {
@@ -469,17 +500,24 @@ app.get("/api/jobs", verifyToken, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Failed to fetch jobs" }); }
 });
 
-app.post("/api/jobs", verifyToken, async (req, res) => {
-  try {
-    // 1. Added applyLink to req.body extraction
-    const { title, company, description, requirements, location, salaryRange, jobType, experienceLevel, applyLink } = req.body;
-    const q = await pool.query(
-      // 2. Added apply_link to the INSERT statement and $10 to VALUES
-      `INSERT INTO jobs (posted_by, title, company, description, requirements, location, salary_range, job_type, experience_level, apply_link, is_active, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,NOW()) RETURNING *`,
-      [req.userId, title, company, description, requirements, location, salaryRange, jobType, experienceLevel, applyLink]
-    ); 
-    res.status(201).json({ job: q.rows[0] });
-  } catch (err) { res.status(500).json({ message: "Failed to create job" }); }
+app.post("/api/jobs", 
+  verifyToken, 
+  [
+    body("title").notEmpty().withMessage("Job title is required").trim().escape(),
+    body("company").notEmpty().withMessage("Company is required").trim().escape(),
+    body("description").notEmpty().withMessage("Description is required").trim(),
+    body("applyLink").optional({ checkFalsy: true }).isURL().withMessage("Must be a valid URL")
+  ],
+  validateRequest,
+  async (req, res) => {
+    try {
+      const { title, company, description, requirements, location, salaryRange, jobType, experienceLevel, applyLink } = req.body;
+      const q = await pool.query(
+        `INSERT INTO jobs (posted_by, title, company, description, requirements, location, salary_range, job_type, experience_level, apply_link, is_active, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,NOW()) RETURNING *`,
+        [req.userId, title, company, description, requirements, location, salaryRange, jobType, experienceLevel, applyLink]
+      ); 
+      res.status(201).json({ job: q.rows[0] });
+    } catch (err) { res.status(500).json({ message: "Failed to create job" }); }
 });
 
 app.put("/api/jobs/:jobId", verifyToken, async (req, res) => {
