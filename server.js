@@ -324,6 +324,24 @@ app.get("/api/users/:id", verifyToken, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Failed to fetch user" }); }
 });
 
+// --- NEW: Fetch posts created by a specific user ---
+app.get("/api/users/:id/posts", verifyToken, async (req, res) => {
+  try {
+    const q = await pool.query(`
+      SELECT p.id, p.content, p.created_at, p.user_id, u.first_name, u.last_name, u.role,
+        (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id) as like_count,
+        EXISTS(SELECT 1 FROM post_likes WHERE post_id = p.id AND user_id = $1) as user_liked,
+        COALESCE((SELECT json_agg(json_build_object('id', c.id, 'content', c.content, 'created_at', c.created_at, 'user_id', c.user_id, 'first_name', cu.first_name, 'last_name', cu.last_name, 'role', cu.role) ORDER BY c.created_at ASC) FROM post_comments c JOIN users cu ON c.user_id = cu.id WHERE c.post_id = p.id), '[]'::json) as comments
+      FROM posts p JOIN users u ON p.user_id = u.id WHERE p.user_id = $2
+      ORDER BY p.created_at DESC
+    `, [req.userId, req.params.id]);
+    
+    res.json({ posts: q.rows });
+  } catch (err) { 
+    res.status(500).json({ message: "Failed to fetch user posts" }); 
+  }
+});
+
 app.put("/api/users/profile", verifyToken, async (req, res) => {
   try {
     const { headline, bio, location, company, firstName, lastName, collegeName, studentId, mobileNo, branch, linkedinUrl, githubUrl, openTo } = req.body;
