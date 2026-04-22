@@ -225,7 +225,6 @@ app.post("/api/auth/resend-otp", async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Failed to resend OTP" }); }
 });
 
-
 app.post("/api/auth/forgot-password", async (req, res) => {
   try {
     const email = req.body.email?.toLowerCase().trim();
@@ -288,7 +287,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
 // ==========================================
 app.get("/api/auth/me", verifyToken, async (req, res) => {
   try {
-    const q = await pool.query(`SELECT id, email, first_name, last_name, headline, bio, role, is_banned, location, current_company as company, passout_year, college_name FROM users WHERE id = $1`, [req.userId]);
+    const q = await pool.query(`SELECT id, email, first_name, last_name, headline, bio, role, is_banned, location, current_company as company, passout_year, college_name, student_id, mobile_no, branch, linkedin_url, github_url, open_to FROM users WHERE id = $1`, [req.userId]);
     res.json({ user: q.rows[0] });
   } catch (err) { res.status(500).json({ message: "Failed to fetch user" }); }
 });
@@ -296,13 +295,11 @@ app.get("/api/auth/me", verifyToken, async (req, res) => {
 app.get("/api/users/directory", verifyToken, async (req, res) => {
   try {
     const { search, passoutYear, limit = 50, offset = 0 } = req.query;
-    
-    let query = `SELECT id, first_name, last_name, email, headline, passout_year, college_name, location, current_company as company FROM users WHERE verification_status = 'verified' AND is_banned = false AND email != 'alumninetworkplatform@gmail.com'`;
+    let query = `SELECT id, first_name, last_name, email, headline, passout_year, college_name, location, current_company as company, branch, open_to FROM users WHERE verification_status = 'verified' AND is_banned = false AND email != 'alumninetworkplatform@gmail.com'`;
     
     const params = []; let i = 1;
     if (search) { 
-      // --- ADDED passout_year::text to the search condition ---
-      query += ` AND (first_name ILIKE $${i} OR last_name ILIKE $${i} OR email ILIKE $${i} OR passout_year::text ILIKE $${i})`; 
+      query += ` AND (first_name ILIKE $${i} OR last_name ILIKE $${i} OR email ILIKE $${i} OR student_id ILIKE $${i} OR passout_year::text ILIKE $${i} OR branch ILIKE $${i} OR open_to ILIKE $${i})`; 
       params.push(`%${search}%`); i++; 
     }
     if (passoutYear) { query += ` AND passout_year = $${i}`; params.push(passoutYear); i++; }
@@ -315,17 +312,32 @@ app.get("/api/users/directory", verifyToken, async (req, res) => {
 
 app.get("/api/users/:id", verifyToken, async (req, res) => {
   try {
-    const q = await pool.query(`SELECT id, first_name, last_name, email, headline, bio, passout_year, college_name, current_company as company, location FROM users WHERE id = $1 AND verification_status = 'verified' AND is_banned = false`, [req.params.id]);
+    const q = await pool.query(`SELECT id, first_name, last_name, email, headline, bio, passout_year, college_name, current_company as company, location, student_id, mobile_no, branch, linkedin_url, github_url, open_to FROM users WHERE id = $1 AND verification_status = 'verified' AND is_banned = false`, [req.params.id]);
     res.json({ user: q.rows[0] });
   } catch (err) { res.status(500).json({ message: "Failed to fetch user" }); }
 });
 
 app.put("/api/users/profile", verifyToken, async (req, res) => {
   try {
-    const { headline, bio, location, company, firstName, lastName, collegeName } = req.body;
+    const { headline, bio, location, company, firstName, lastName, collegeName, studentId, mobileNo, branch, linkedinUrl, githubUrl, openTo } = req.body;
     const q = await pool.query(
-      `UPDATE users SET headline=COALESCE($1, headline), bio=COALESCE($2, bio), location=COALESCE($3, location), current_company=COALESCE($4, current_company), first_name=COALESCE($5, first_name), last_name=COALESCE($6, last_name), college_name=COALESCE($7, college_name), updated_at=NOW() WHERE id=$8 RETURNING *`,
-      [headline, bio, location, company, firstName, lastName, collegeName, req.userId]
+      `UPDATE users SET 
+        headline=COALESCE($1, headline), 
+        bio=COALESCE($2, bio), 
+        location=COALESCE($3, location), 
+        current_company=COALESCE($4, current_company), 
+        first_name=COALESCE($5, first_name), 
+        last_name=COALESCE($6, last_name), 
+        college_name=COALESCE($7, college_name),
+        student_id=COALESCE($8, student_id),
+        mobile_no=COALESCE($9, mobile_no),
+        branch=COALESCE($10, branch),
+        linkedin_url=COALESCE($11, linkedin_url),
+        github_url=COALESCE($12, github_url),
+        open_to=COALESCE($13, open_to),
+        updated_at=NOW() 
+      WHERE id=$14 RETURNING *`,
+      [headline, bio, location, company, firstName, lastName, collegeName, studentId, mobileNo, branch, linkedinUrl, githubUrl, openTo, req.userId]
     );
     res.json({ user: q.rows[0] });
   } catch (err) { res.status(500).json({ message: "Failed to update profile" }); }
@@ -352,11 +364,9 @@ app.get("/api/user/indicators", verifyToken, async (req, res) => {
 app.get("/api/admin/users", verifyToken, requireAdmin, async (req, res) => {
   try {
     const { search } = req.query;
-    // --- ADDED passout_year to the SELECT statement ---
     let query = "SELECT id, first_name, last_name, email, role, is_banned, college_name, passout_year FROM users";
     let params = [];
     if (search) { 
-      // --- ADDED passout_year::text to the search condition ---
       query += " WHERE first_name ILIKE $1 OR last_name ILIKE $1 OR email ILIKE $1 OR passout_year::text ILIKE $1"; 
       params.push(`%${search}%`); 
     }
@@ -376,7 +386,6 @@ app.patch("/api/admin/users/:id/role", verifyToken, requireAdmin, async (req, re
   await pool.query("UPDATE users SET role = $1 WHERE id = $2", [req.body.role, req.params.id]); res.json({ message: `Role updated` }); 
 });
 
-// 👇 PASTE THIS NEW ROUTE HERE 👇
 app.post("/api/admin/broadcast-email", verifyToken, requireAdmin, async (req, res) => {
   try {
     const { subject, message, targetEmail } = req.body;
@@ -403,7 +412,6 @@ app.post("/api/admin/broadcast-email", verifyToken, requireAdmin, async (req, re
     res.status(500).json({ message: "Failed to send manual emails" });
   }
 });
-// 👆 -------------------------- 👆
 
 // ==========================================
 //          FEED (POSTS, LIKES, COMMENTS)
@@ -430,7 +438,6 @@ app.get("/api/posts", verifyToken, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Failed to fetch posts" }); }
 });
 
-// ADD THIS NEW ROUTE RIGHT BELOW IT:
 app.get("/api/posts/:id", verifyToken, async (req, res) => {
   try {
     const q = await pool.query(`
@@ -522,20 +529,19 @@ app.post("/api/jobs",
 
 app.put("/api/jobs/:jobId", verifyToken, async (req, res) => {
   try {
-    // 1. Added applyLink to req.body extraction
     const { title, company, description, requirements, location, salaryRange, jobType, experienceLevel, applyLink } = req.body;
     const jobCheck = await pool.query("SELECT posted_by FROM jobs WHERE id = $1", [req.params.jobId]);
     if (jobCheck.rows.length === 0) return res.status(404).json({ message: "Job not found" });
     if (req.userRole !== 'admin' && String(jobCheck.rows[0].posted_by) !== String(req.userId)) return res.status(403).json({ message: "Unauthorized" });
 
     const q = await pool.query(
-      // 2. Added apply_link=$9 and shifted the ID to $10
       `UPDATE jobs SET title=$1, company=$2, description=$3, requirements=$4, location=$5, salary_range=$6, job_type=$7, experience_level=$8, apply_link=$9 WHERE id=$10 RETURNING *`,
       [title, company, description, requirements, location, salaryRange, jobType, experienceLevel, applyLink, req.params.jobId]
     ); 
     res.json({ job: q.rows[0], message: "Job updated successfully" });
   } catch (err) { res.status(500).json({ message: "Failed to update job" }); }
 });
+
 app.delete("/api/jobs/:jobId", verifyToken, async (req, res) => {
   try {
     const jobCheck = await pool.query("SELECT posted_by FROM jobs WHERE id = $1", [req.params.jobId]);
@@ -546,6 +552,8 @@ app.delete("/api/jobs/:jobId", verifyToken, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Failed to delete" }); }
 });
 
+// Note: These application routes are mostly unused now since moving to external apply links, 
+// but are left intact to avoid breaking any legacy references.
 app.post("/api/jobs/:jobId/apply", verifyToken, async (req, res) => {
   try {
     const { coverLetter, resume, phone, linkedinUrl } = req.body;
@@ -600,12 +608,11 @@ app.post("/api/connections/:userId/request", verifyToken, async (req, res) => {
     }
 
     const result = await pool.query(`INSERT INTO connections (user_id, connected_user_id, status, created_at) VALUES ($1, $2, 'pending', NOW()) RETURNING *`, [req.userId, userId]);
-    // --- NEW EMAIL TRIGGER LOGIC ---
+    
     // Fetch the target user's email and name directly from the database
     const targetUser = await pool.query("SELECT email, first_name FROM users WHERE id = $1", [userId]);
     
     if (targetUser.rows.length > 0) {
-      // Send the email in the background (no await) so it doesn't slow down the user's UI
       sendNotificationEmail(
         targetUser.rows[0].email,
         targetUser.rows[0].first_name,
@@ -613,7 +620,6 @@ app.post("/api/connections/:userId/request", verifyToken, async (req, res) => {
         "Someone just sent you a connection request on the Alumni Network. Log in to see who it is!"
       );
     }
-    // --------------------------------
     res.status(201).json({ connection: result.rows[0], message: "Connection request sent" });
   } catch (err) { res.status(500).json({ message: "Failed to send connection request" }); }
 });
@@ -738,9 +744,6 @@ app.post("/api/messages/:roomId", verifyToken, async (req, res) => {
     // 2. Broadcast the message instantly to the WebSocket room
     req.app.get("io").to(req.params.roomId).emit("receiveMessage", newMsg.rows[0]);
 
-    // Note: Instant email notifications for messages are disabled to save API quota.
-    // The frontend will still show the red "Unread Message" dot thanks to the WebSocket!
-
     res.json({ message: newMsg.rows[0] });
   } catch (err) { 
     res.status(500).json({ message: "Failed to send message" }); 
@@ -758,8 +761,6 @@ app.delete("/api/messages/room/:roomId", verifyToken, async (req, res) => {
       return res.status(403).json({ message: "Unauthorized or room not found" });
     }
 
-    // Deleting the room will automatically delete the messages if you have ON DELETE CASCADE in your DB.
-    // If not, delete messages manually first:
     await pool.query("DELETE FROM chat_messages WHERE room_id = $1", [req.params.roomId]);
     await pool.query("DELETE FROM chat_rooms WHERE id = $1", [req.params.roomId]);
     
@@ -769,7 +770,6 @@ app.delete("/api/messages/room/:roomId", verifyToken, async (req, res) => {
   }
 });
 
-// 🟢 FIXED: Inbox sorting and safe ID comparison
 app.get("/api/inbox", verifyToken, async (req, res) => {
   try {
     const rooms = await pool.query(`
@@ -796,14 +796,10 @@ app.get("/api/inbox", verifyToken, async (req, res) => {
 
 app.use((err, req, res, next) => { console.error("❌ Error:", err); res.status(500).json({ message: "Server error" }); });
 
-// --- ALL YOUR EXISTING ROUTES STAY ABOVE THIS LINE ---
-
 const PORT = process.env.PORT || 5000;
 
-// 1. Wrap your Express app in an HTTP server
 const server = http.createServer(app);
 
-// 2. Attach Socket.io to that new server
 const io = new Server(server, {
   cors: {
     origin: process.env.FRONTEND_URL || 'http://localhost:3000',
@@ -811,41 +807,33 @@ const io = new Server(server, {
   }
 });
 
-// 3. Make 'io' available inside your Express routes
 app.set("io", io);
 
-// 4. Listen for when users connect to the chat
 io.on("connection", (socket) => {
   socket.on("joinRoom", (roomId) => {
     socket.join(roomId);
   });
-  // 👇 PASTE THIS NEW BLOCK RIGHT HERE 👇
+
   socket.on("markAsRead", async ({ roomId, userId }) => {
     try {
-      // Update the database to mark messages as read
       await pool.query(
         "UPDATE chat_messages SET read_status = 'read' WHERE room_id = $1 AND sender_id != $2 AND read_status != 'read'", 
         [roomId, userId]
       );
       
-      // Tell everyone in the room to update their UI
       io.to(roomId).emit("messagesRead", { roomId, readerId: userId });
     } catch (err) {
       console.error("Failed to mark messages as read", err);
     }
   });
-  // 👆 -------------------------------- 👆
-  // --- NEW: TYPING INDICATORS ---
+
   socket.on("typing", (roomId) => {
-    // Broadcast to everyone in the room EXCEPT the sender
     socket.to(roomId).emit("userTyping"); 
   });
 
   socket.on("stopTyping", (roomId) => {
     socket.to(roomId).emit("userStoppedTyping");
   });
-  // ------------------------------
 });
 
-// 5. Start the server using 'server.listen' instead of 'app.listen'
 server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
