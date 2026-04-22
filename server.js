@@ -379,7 +379,9 @@ app.post("/api/admin/broadcast-email", verifyToken, requireAdmin, async (req, re
 // ==========================================
 app.get("/api/posts", verifyToken, async (req, res) => {
   try {
-    const { sort } = req.query;
+    const { sort, page = 1, limit = 10 } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
     let orderBy = "p.created_at DESC"; 
     if (sort === "oldest") orderBy = "p.created_at ASC";
     else if (sort === "top") orderBy = "like_count DESC, p.created_at DESC";
@@ -391,9 +393,26 @@ app.get("/api/posts", verifyToken, async (req, res) => {
         COALESCE((SELECT json_agg(json_build_object('id', c.id, 'content', c.content, 'created_at', c.created_at, 'user_id', c.user_id, 'first_name', cu.first_name, 'last_name', cu.last_name, 'role', cu.role) ORDER BY c.created_at ASC) FROM post_comments c JOIN users cu ON c.user_id = cu.id WHERE c.post_id = p.id), '[]'::json) as comments
       FROM posts p JOIN users u ON p.user_id = u.id WHERE u.is_banned = false
       ORDER BY ${orderBy}
-    `, [req.userId]);
+      LIMIT $2 OFFSET $3
+    `, [req.userId, limit, offset]);
     res.json({ posts: q.rows });
   } catch (err) { res.status(500).json({ message: "Failed to fetch posts" }); }
+});
+
+// ADD THIS NEW ROUTE RIGHT BELOW IT:
+app.get("/api/posts/:id", verifyToken, async (req, res) => {
+  try {
+    const q = await pool.query(`
+      SELECT p.id, p.content, p.created_at, p.user_id, u.first_name, u.last_name, u.role,
+        (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id) as like_count,
+        EXISTS(SELECT 1 FROM post_likes WHERE post_id = p.id AND user_id = $1) as user_liked,
+        COALESCE((SELECT json_agg(json_build_object('id', c.id, 'content', c.content, 'created_at', c.created_at, 'user_id', c.user_id, 'first_name', cu.first_name, 'last_name', cu.last_name, 'role', cu.role) ORDER BY c.created_at ASC) FROM post_comments c JOIN users cu ON c.user_id = cu.id WHERE c.post_id = p.id), '[]'::json) as comments
+      FROM posts p JOIN users u ON p.user_id = u.id WHERE p.id = $2
+    `, [req.userId, req.params.id]);
+    
+    if (q.rows.length === 0) return res.status(404).json({ message: "Post not found" });
+    res.json({ post: q.rows[0] });
+  } catch (err) { res.status(500).json({ message: "Failed to fetch post" }); }
 });
 
 app.post("/api/posts", verifyToken, async (req, res) => {
