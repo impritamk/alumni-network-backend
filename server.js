@@ -452,10 +452,12 @@ app.get("/api/jobs", verifyToken, async (req, res) => {
 
 app.post("/api/jobs", verifyToken, async (req, res) => {
   try {
-    const { title, company, description, requirements, location, salaryRange, jobType, experienceLevel } = req.body;
+    // 1. Added applyLink to req.body extraction
+    const { title, company, description, requirements, location, salaryRange, jobType, experienceLevel, applyLink } = req.body;
     const q = await pool.query(
-      `INSERT INTO jobs (posted_by, title, company, description, requirements, location, salary_range, job_type, experience_level, is_active, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,NOW()) RETURNING *`,
-      [req.userId, title, company, description, requirements, location, salaryRange, jobType, experienceLevel]
+      // 2. Added apply_link to the INSERT statement and $10 to VALUES
+      `INSERT INTO jobs (posted_by, title, company, description, requirements, location, salary_range, job_type, experience_level, apply_link, is_active, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,NOW()) RETURNING *`,
+      [req.userId, title, company, description, requirements, location, salaryRange, jobType, experienceLevel, applyLink]
     ); 
     res.status(201).json({ job: q.rows[0] });
   } catch (err) { res.status(500).json({ message: "Failed to create job" }); }
@@ -463,19 +465,20 @@ app.post("/api/jobs", verifyToken, async (req, res) => {
 
 app.put("/api/jobs/:jobId", verifyToken, async (req, res) => {
   try {
-    const { title, company, description, requirements, location, salaryRange, jobType, experienceLevel } = req.body;
+    // 1. Added applyLink to req.body extraction
+    const { title, company, description, requirements, location, salaryRange, jobType, experienceLevel, applyLink } = req.body;
     const jobCheck = await pool.query("SELECT posted_by FROM jobs WHERE id = $1", [req.params.jobId]);
     if (jobCheck.rows.length === 0) return res.status(404).json({ message: "Job not found" });
     if (req.userRole !== 'admin' && String(jobCheck.rows[0].posted_by) !== String(req.userId)) return res.status(403).json({ message: "Unauthorized" });
 
     const q = await pool.query(
-      `UPDATE jobs SET title=$1, company=$2, description=$3, requirements=$4, location=$5, salary_range=$6, job_type=$7, experience_level=$8 WHERE id=$9 RETURNING *`,
-      [title, company, description, requirements, location, salaryRange, jobType, experienceLevel, req.params.jobId]
+      // 2. Added apply_link=$9 and shifted the ID to $10
+      `UPDATE jobs SET title=$1, company=$2, description=$3, requirements=$4, location=$5, salary_range=$6, job_type=$7, experience_level=$8, apply_link=$9 WHERE id=$10 RETURNING *`,
+      [title, company, description, requirements, location, salaryRange, jobType, experienceLevel, applyLink, req.params.jobId]
     ); 
     res.json({ job: q.rows[0], message: "Job updated successfully" });
   } catch (err) { res.status(500).json({ message: "Failed to update job" }); }
 });
-
 app.delete("/api/jobs/:jobId", verifyToken, async (req, res) => {
   try {
     const jobCheck = await pool.query("SELECT posted_by FROM jobs WHERE id = $1", [req.params.jobId]);
