@@ -797,20 +797,63 @@ app.delete("/api/messages/room/:roomId", verifyToken, async (req, res) => {
 
 app.get("/api/inbox", verifyToken, async (req, res) => {
   try {
+    // 1. Fetch all rooms (Query 1)
     const rooms = await pool.query(`
       SELECT cr.*, COALESCE((SELECT MAX(created_at) FROM chat_messages WHERE room_id = cr.id), cr.created_at) as last_activity
       FROM chat_rooms cr WHERE name LIKE $1 ORDER BY last_activity DESC
     `, [`%${req.userId}%`]);
     
-    const inboxData = await Promise.all(rooms.rows.map(async (room) => {
+    if (rooms.rows.length === 0) {
+      return res.json({ rooms: [] });
+    }
+
+    // 2. Extract arrays of IDs we need to look up
+    const otherUserIds = [];
+    const roomIds = [];
+    
+    rooms.rows.forEach(room => {
       const ids = room.name.split('_');
-      // Safely compare IDs using strings
+      const otherUserId = String(ids[0]) === String(req.userId) ? ids[1] : ids[0];
+      otherUserIds.push(otherUserId);
+      roomIds.push(room.id);
+    });
+
+    // 3. Fetch ALL relevant users in ONE query (Query 2)
+    // using PostgreSQL's ANY() function for arrays
+    const usersRes = await pool.query(
+      `SELECT id, first_name, last_name FROM users WHERE id = ANY($1)`, 
+      [otherUserIds]
+    );
+    
+    // Create a quick lookup map for the users so we don't have to search the array
+    const userMap = {};
+    usersRes.rows.forEach(u => userMap[u.id] = u);
+
+    // 4. Fetch ALL unread counts in ONE query using GROUP BY (Query 3)
+    const unreadRes = await pool.query(`
+      SELECT room_id, COUNT(*) as count 
+      FROM chat_messages 
+      WHERE room_id = ANY($1) 
+        AND sender_id != $2 
+        AND (read_by IS NULL OR NOT ($2 = ANY(read_by)))
+      GROUP BY room_id
+    `, [roomIds, req.userId]);
+
+    // Create a lookup map for the unread counts
+    const unreadMap = {};
+    unreadRes.rows.forEach(u => unreadMap[u.room_id] = parseInt(u.count));
+
+    // 5. Stitch it all together in memory (Zero database hits here!)
+    const inboxData = rooms.rows.map(room => {
+      const ids = room.name.split('_');
       const otherUserId = String(ids[0]) === String(req.userId) ? ids[1] : ids[0];
       
-      const userRes = await pool.query("SELECT id, first_name, last_name FROM users WHERE id = $1", [otherUserId]);
-      const unreadQuery = await pool.query(`SELECT COUNT(*) FROM chat_messages WHERE room_id = $1 AND sender_id != $2 AND (read_by IS NULL OR NOT ($2 = ANY(read_by)))`, [room.id, req.userId]);
-      return { room, otherUser: userRes.rows[0], hasUnread: parseInt(unreadQuery.rows[0].count) > 0 };
-    }));
+      return { 
+        room, 
+        otherUser: userMap[otherUserId], 
+        hasUnread: (unreadMap[room.id] || 0) > 0 
+      };
+    });
     
     res.json({ rooms: inboxData });
   } catch (err) { 
