@@ -1,15 +1,14 @@
 const express = require("express");
-const crypto = require("crypto");
 const axios = require("axios");
-const jwt = require("jsonwebtoken");
 const cron = require("node-cron");
 
 const router = express.Router();
 
-// ==========================================
-// 1. 25 ROTATING ALUMNI EMAIL TEMPLATES
-// ==========================================
-const EMAIL_TEMPLATES = [
+// 25 rotating templates for the automatic every-3-days email
+const AUTO_EMAIL_TEMPLATES = [
+  { key: "hello_world", subject: "Hello World! (It's been a while) 👋", content: "Just a quick ping to see how you are doing!\n\nThe ConnectAlumni network has been growing, and your batchmates are missing you. We have some fresh job postings and new conversations happening right now.\n\nTake a quick break from your screen and come say hi!" },
+  { key: "error_404", subject: "Error 404: Alumni Not Found 🔍", content: "We ran a search for you on the network recently, but you were nowhere to be found!\n\nDon't worry, we saved your spot. The Chaibasa Engineering community has been sharing some great new job referrals and interview tips this week.\n\nLog back in and let us know what you've been working on lately!" },
+  { key: "code_compiling", subject: "While your code is compiling... ⏳", content: "...why not check in with your college network?\n\nWe know you are busy, but there are some new job opportunities and alumni discussions waiting for you. It only takes a minute to see what’s new.\n\nGrab some water, stretch your legs, and come see what your batchmates are up to!" },
   { key: "reconnect_batchmates", subject: "👋 Catch up with your CEC batchmates", content: "See who from your batch recently updated their role, location, or company on Connect Alumni." },
   { key: "share_job_opening", subject: "💼 Hiring at your company? Help a fellow alumnus", content: "Got an open role or referral opportunity? Post it on the Connect Alumni Job Board in under a minute." },
   { key: "explore_new_jobs", subject: "🚀 Fresh opportunities posted on Connect Alumni", content: "Alumni across tech, core engineering, and management have shared new openings. Check them out today." },
@@ -31,15 +30,9 @@ const EMAIL_TEMPLATES = [
   { key: "alumni_spotlight", subject: "🌟 Every alumnus has a story worth sharing", content: "Update your bio and headline so others can learn about your journey since graduation." },
   { key: "open_to_work", subject: "🔎 Looking for your next role?", content: "Set your 'Open To' badge on your profile so hiring alumni can spot you right away." },
   { key: "campus_memories", subject: "🏛️ Throwback to Chaibasa Engineering College", content: "Reconnect with the people who made your college years memorable—check out who's online today." },
-  { key: "interview_prep", subject: "🎯 Ace your next interview with alumni insights", content: "Ask questions on the feed and get real-world tips from alumni working at top companies." },
-  { key: "network_growth", subject: "📈 Our alumni network is growing stronger every week", content: "More graduates are joining every week. Browse the latest members in the directory." },
-  { key: "quick_update", subject: "🔔 New activity waiting for you on Connect Alumni", content: "Log in to check new posts, job listings, and messages from your network." },
   { key: "stay_connected", subject: "🌐 Your lifelong CEC network is one click away", content: "Whether you're hiring, job hunting, or just catching up—your alumni community is here." }
 ];
 
-// ==========================================
-// 2. HTML ESCAPE & BREVO SENDER
-// ==========================================
 function escapeHtml(str = "") {
   return String(str)
     .replace(/&/g, "&amp;")
@@ -48,13 +41,13 @@ function escapeHtml(str = "") {
     .replace(/"/g, "&quot;");
 }
 
-async function sendNotificationEmail(email, name, subject, content) {
+async function sendAutoEmail(email, name, subject, content) {
   const safeName = escapeHtml(name || "Alumni");
   const safeContent = escapeHtml(content).replace(/\n/g, "<br/>");
 
   const emailHtml = `
     <div style="font-family: 'Inter', Helvetica, Arial, sans-serif; padding: 30px; background-color: #f8fafc;">
-      <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; padding: 30px; border-radius: 8px; border: 1px solid #e2e8f0;">
+      <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; padding: 30px; border-radius: 8px;">
         <h2 style="color: #0f172a; margin-top: 0;">Hi ${safeName},</h2>
         <p style="color: #475569; font-size: 16px; line-height: 1.6;">${safeContent}</p>
         <a href="${process.env.FRONTEND_URL}" style="display: inline-block; background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 15px; font-weight: bold;">
@@ -76,10 +69,7 @@ async function sendNotificationEmail(email, name, subject, content) {
   );
 }
 
-// ==========================================
-// 3. DB LOGGING & 3-DAY AUTOMATED ROTATION
-// ==========================================
-async function ensureCampaignLogTable(pool) {
+async function ensureLogTable(pool) {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS automated_email_logs (
       id SERIAL PRIMARY KEY,
@@ -91,30 +81,28 @@ async function ensureCampaignLogTable(pool) {
   `);
 }
 
-async function runThreeDayAutoCampaign(pool, force = false) {
-  await ensureCampaignLogTable(pool);
+async function runThreeDayAutoCampaign(pool) {
+  await ensureLogTable(pool);
 
-  // Check last automated send (enforces exact 3-day gap)
   const lastLog = await pool.query(
     "SELECT template_index, sent_at FROM automated_email_logs ORDER BY id DESC LIMIT 1"
   );
 
-  if (!force && lastLog.rows.length > 0) {
+  // Enforce exact 3-day gap
+  if (lastLog.rows.length > 0) {
     const lastSent = new Date(lastLog.rows[0].sent_at);
     const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
     if (Date.now() - lastSent.getTime() < threeDaysMs) {
-      return { skipped: true, reason: "Less than 3 days since last automated campaign." };
+      return;
     }
   }
 
-  // Pick next template in rotation (0 -> 24 -> 0)
   const nextIndex =
     lastLog.rows.length > 0
-      ? (lastLog.rows[0].template_index + 1) % EMAIL_TEMPLATES.length
+      ? (lastLog.rows[0].template_index + 1) % AUTO_EMAIL_TEMPLATES.length
       : 0;
-  const template = EMAIL_TEMPLATES[nextIndex];
+  const template = AUTO_EMAIL_TEMPLATES[nextIndex];
 
-  // Fetch verified, active users (excluding guest demo account)
   const usersRes = await pool.query(
     `SELECT email, first_name FROM users 
      WHERE verification_status = 'verified' 
@@ -125,7 +113,7 @@ async function runThreeDayAutoCampaign(pool, force = false) {
   let sentCount = 0;
   for (const user of usersRes.rows) {
     try {
-      await sendNotificationEmail(user.email, user.first_name, template.subject, template.content);
+      await sendAutoEmail(user.email, user.first_name, template.subject, template.content);
       sentCount++;
     } catch (err) {
       console.error(`❌ Auto-email failed for ${user.email}:`, err.message);
@@ -138,118 +126,25 @@ async function runThreeDayAutoCampaign(pool, force = false) {
   );
 
   console.log(`✅ 3-Day Auto Email [${template.key}] sent to ${sentCount} users.`);
-  return { skipped: false, templateKey: template.key, sentCount };
 }
 
-// ==========================================
-// 4. FACTORY FUNCTION (MOUNTS ROUTES + CRON)
-// ==========================================
 module.exports = function initEmailModule({ pool, verifyToken, requireAdmin }) {
-  // Helper for two-step admin confirmation hash
-  const buildHash = (adminId, subject, message, targetEmail = "") =>
-    crypto.createHash("sha256").update(`${adminId}|${subject}|${message}|${targetEmail}`).digest("hex");
-
-  // A. Manual Admin Broadcast WITH Two-Step Confirmation
-  router.post("/admin/broadcast-email", verifyToken, requireAdmin, async (req, res) => {
-    try {
-      const { subject, message, targetEmail, confirmed, confirmationToken } = req.body;
-      if (!subject?.trim() || !message?.trim()) {
-        return res.status(400).json({ message: "Subject and message are required." });
-      }
-
-      const cleanSubject = subject.trim();
-      const cleanMessage = message.trim();
-      const cleanTarget = targetEmail?.trim().toLowerCase() || "";
-
-      const recipientsRes = cleanTarget
-        ? await pool.query(
-            "SELECT email, first_name FROM users WHERE LOWER(email) = $1 AND verification_status = 'verified' AND is_banned = false",
-            [cleanTarget]
-          )
-        : await pool.query(
-            "SELECT email, first_name FROM users WHERE verification_status = 'verified' AND is_banned = false AND email != 'alumninetworkplatform@gmail.com'"
-          );
-
-      const recipients = recipientsRes.rows;
-      if (recipients.length === 0) {
-        return res.status(404).json({ message: "No verified recipients found." });
-      }
-
-      const expectedHash = buildHash(req.userId, cleanSubject, cleanMessage, cleanTarget);
-
-      // Step 1: Return preview + 5-minute confirmation token
-      if (!confirmed) {
-        const token = jwt.sign(
-          { adminId: req.userId, payloadHash: expectedHash, purpose: "broadcast-confirm" },
-          process.env.JWT_SECRET,
-          { expiresIn: "5m" }
-        );
-        return res.json({
-          requiresConfirmation: true,
-          confirmationToken: token,
-          recipientCount: recipients.length,
-          preview: {
-            to: cleanTarget || `All ${recipients.length} verified users`,
-            subject: cleanSubject,
-            message: cleanMessage
-          },
-          message: `Please confirm sending to ${recipients.length} recipient(s).`
-        });
-      }
-
-      // Step 2: Verify confirmation token before sending
-      let decoded;
-      try {
-        decoded = jwt.verify(confirmationToken || "", process.env.JWT_SECRET);
-      } catch {
-        return res.status(400).json({ message: "Confirmation expired or invalid. Please preview again." });
-      }
-
-      if (
-        decoded.purpose !== "broadcast-confirm" ||
-        decoded.adminId !== req.userId ||
-        decoded.payloadHash !== expectedHash
-      ) {
-        return res.status(400).json({ message: "Email changed after confirmation. Please confirm again." });
-      }
-
-      let sentCount = 0;
-      for (const user of recipients) {
-        await sendNotificationEmail(user.email, user.first_name, cleanSubject, cleanMessage);
-        sentCount++;
-      }
-
-      return res.json({
-        message: cleanTarget
-          ? `Confirmed and sent email to ${cleanTarget}!`
-          : `Confirmed and broadcasted email to ${sentCount} users!`
-      });
-    } catch (err) {
-      console.error("❌ Broadcast Error:", err.message);
-      return res.status(500).json({ message: "Failed to send broadcast email." });
-    }
-  });
-
-  // B. Admin endpoint to view templates & automation history
+  // Optional route to inspect history & templates
   router.get("/admin/email-campaigns/status", verifyToken, requireAdmin, async (req, res) => {
     try {
-      await ensureCampaignLogTable(pool);
+      await ensureLogTable(pool);
       const logs = await pool.query("SELECT * FROM automated_email_logs ORDER BY id DESC LIMIT 10");
-      res.json({
-        totalTemplates: EMAIL_TEMPLATES.length,
-        templates: EMAIL_TEMPLATES,
-        recentRuns: logs.rows
-      });
+      res.json({ totalTemplates: AUTO_EMAIL_TEMPLATES.length, recentRuns: logs.rows });
     } catch (err) {
       res.status(500).json({ message: "Failed to load campaign status" });
     }
   });
 
-  // C. Start daily 10:00 AM IST check (triggers actual send every 3 days)
+  // Runs every day at 10:00 AM IST; sends if 3 days have passed
   cron.schedule(
     "0 10 * * *",
     () => {
-      runThreeDayAutoCampaign(pool, false).catch((err) =>
+      runThreeDayAutoCampaign(pool).catch((err) =>
         console.error("❌ Scheduled 3-day campaign error:", err.message)
       );
     },
