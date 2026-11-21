@@ -118,16 +118,30 @@ function escapeHtml(str = "") {
 
 async function sendAutoEmail(email, name, subject, content) {
   const safeName = escapeHtml(name || "Alumni");
-  const safeContent = escapeHtml(content).replace(/\n/g, "<br/>");
+  
+  // Splits text by double-newlines into properly spaced paragraphs
+  const formattedBody = escapeHtml(content)
+    .split(/\n\s*\n/)
+    .map(
+      (paragraph) =>
+        `<p style="color: #475569; font-size: 16px; line-height: 1.6; margin: 0 0 16px 0;">${paragraph.replace(/\n/g, "<br/>")}</p>`
+    )
+    .join("");
 
   const emailHtml = `
     <div style="font-family: 'Inter', Helvetica, Arial, sans-serif; padding: 30px; background-color: #f8fafc;">
-      <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; padding: 30px; border-radius: 8px;">
-        <h2 style="color: #0f172a; margin-top: 0;">Hi ${safeName},</h2>
-        <p style="color: #475569; font-size: 16px; line-height: 1.6;">${safeContent}</p>
-        <a href="${process.env.FRONTEND_URL}" style="display: inline-block; background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 15px; font-weight: bold;">
+      <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; padding: 30px; border-radius: 8px; border: 1px solid #e2e8f0;">
+        <h2 style="color: #0f172a; margin-top: 0; margin-bottom: 16px;">Hi ${safeName},</h2>
+        ${formattedBody}
+        <a href="${process.env.FRONTEND_URL}" style="display: inline-block; background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 8px; font-weight: bold;">
           Open ConnectAlumni
         </a>
+        
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 28px 0 16px 0;" />
+        <p style="color: #94a3b8; font-size: 12px; line-height: 1.5; margin: 0;">
+          <strong>Please do not reply to this email</strong>—this inbox is unmonitored.<br/>
+          You receive this brief check-in once every 3 days to share community updates and keep our free alumni platform active and running smoothly.
+        </p>
       </div>
     </div>
   `;
@@ -135,7 +149,7 @@ async function sendAutoEmail(email, name, subject, content) {
   await axios.post(
     "https://api.brevo.com/v3/smtp/email",
     {
-      sender: { email: process.env.FROM_EMAIL, name: "Connect Alumni" },
+      sender: { email: process.env.FROM_EMAIL, name: "Connect Alumni (No-Reply)" },
       to: [{ email }],
       subject,
       htmlContent: emailHtml
