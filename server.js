@@ -925,6 +925,10 @@ app.get("/api/inbox", verifyToken, async (req, res) => {
 app.use((err, req, res, next) => { console.error("❌ Error:", err); res.status(500).json({ message: "Server error" }); });
 
 const PORT = process.env.PORT || 5000;
+app.get("/", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
 app.get("/api/ping", (req, res) => {
   res.status(200).json({ status: "awake" });
 });
