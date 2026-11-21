@@ -150,6 +150,10 @@ const requireAdmin = (req, res, next) => {
   next(); 
 };
 
+const crypto = require("crypto");
+const initEmailModule = require("./routes/emailCampaigns");
+app.use("/api", initEmailModule({ pool, verifyToken, requireAdmin }));
+
 // ==========================================
 //               AUTH ROUTES
 // ==========================================
@@ -411,33 +415,89 @@ app.patch("/api/admin/users/:id/role", verifyToken, requireAdmin, async (req, re
   await pool.query("UPDATE users SET role = $1 WHERE id = $2", [req.body.role, req.params.id]); res.json({ message: `Role updated` }); 
 });
 
+function buildBroadcastHash(adminId, subject, message, targetEmail = "") {
+  return crypto
+    .createHash("sha256")
+    .update(`${adminId}|${subject}|${message}|${targetEmail}`)
+    .digest("hex");
+}
+
 app.post("/api/admin/broadcast-email", verifyToken, requireAdmin, async (req, res) => {
   try {
-    const { subject, message, targetEmail } = req.body;
+    const { subject, message, targetEmail, confirmed, confirmationToken } = req.body;
 
-    // If you pass a specific email, send it just to them
-    if (targetEmail) {
-      const targetUser = await pool.query("SELECT email, first_name FROM users WHERE email = $1", [targetEmail]);
-      if (targetUser.rows.length === 0) return res.status(404).json({ message: "User not found" });
-      
-      await sendNotificationEmail(targetUser.rows[0].email, targetUser.rows[0].first_name, subject, message);
-      return res.json({ message: `Manual email sent to ${targetEmail}!` });
-    } 
-    
-    // If no target email is passed, send to EVERY verified user
-    const allUsers = await pool.query("SELECT email, first_name FROM users WHERE verification_status = 'verified'");
-    
-    for (const user of allUsers.rows) {
-      sendNotificationEmail(user.email, user.first_name, subject, message);
+    if (!subject?.trim() || !message?.trim()) {
+      return res.status(400).json({ message: "Subject and message are required." });
     }
 
-    res.json({ message: `Manual email broadcasted to ${allUsers.rows.length} users!` });
+    const cleanSubject = subject.trim();
+    const cleanMessage = message.trim();
+    const cleanTarget = targetEmail?.trim().toLowerCase() || "";
+
+    // Find recipient(s): either 1 specific user OR all verified users
+    const recipientsRes = cleanTarget
+      ? await pool.query(
+          "SELECT email, first_name FROM users WHERE LOWER(email) = $1",
+          [cleanTarget]
+        )
+      : await pool.query(
+          "SELECT email, first_name FROM users WHERE verification_status = 'verified' AND is_banned = false AND email != 'alumninetworkplatform@gmail.com'"
+        );
+
+    if (recipientsRes.rows.length === 0) {
+      return res.status(404).json({ message: cleanTarget ? "User not found" : "No verified users found" });
+    }
+
+    const expectedHash = buildBroadcastHash(req.userId, cleanSubject, cleanMessage, cleanTarget);
+
+    // STEP 1: Ask for confirmation before sending
+    if (!confirmed) {
+      const token = jwt.sign(
+        { adminId: req.userId, payloadHash: expectedHash, purpose: "broadcast-confirm" },
+        process.env.JWT_SECRET,
+        { expiresIn: "5m" }
+      );
+
+      return res.json({
+        requiresConfirmation: true,
+        confirmationToken: token,
+        recipientCount: recipientsRes.rows.length,
+        message: cleanTarget
+          ? `Send email to ${cleanTarget}?`
+          : `Send email to ALL ${recipientsRes.rows.length} verified users?`
+      });
+    }
+
+    // STEP 2: Verify confirmation token and send
+    let decoded;
+    try {
+      decoded = jwt.verify(confirmationToken || "", process.env.JWT_SECRET);
+    } catch {
+      return res.status(400).json({ message: "Confirmation expired. Please try again." });
+    }
+
+    if (
+      decoded.purpose !== "broadcast-confirm" ||
+      decoded.adminId !== req.userId ||
+      decoded.payloadHash !== expectedHash
+    ) {
+      return res.status(400).json({ message: "Email content changed. Please confirm again." });
+    }
+
+    for (const user of recipientsRes.rows) {
+      await sendNotificationEmail(user.email, user.first_name, cleanSubject, cleanMessage);
+    }
+
+    return res.json({
+      message: cleanTarget
+        ? `Manual email sent to ${cleanTarget}!`
+        : `Manual email broadcasted to ${recipientsRes.rows.length} users!`
+    });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Failed to send manual emails" });
+    return res.status(500).json({ message: "Failed to send manual emails" });
   }
 });
-
 // ==========================================
 //          FEED (POSTS, LIKES, COMMENTS)
 // ==========================================
