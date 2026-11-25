@@ -19,6 +19,90 @@ const AUTO_INBOX_TEMPLATES = [
   {
     title: "Stay Connected ✨",
     body: "Drop a post on the feed or say hi to someone in your network—even a quick note keeps the community active."
+  },
+  {
+    title: "Fresh Job Leads 🚀",
+    body: "Alumni across tech, core engineering, and management regularly share openings on the Job Board. Take a quick look today!"
+  },
+  {
+    title: "Profile Spotlight 🌟",
+    body: "Adding your current company, role, and LinkedIn link helps juniors and batchmates discover and connect with you."
+  },
+  {
+    title: "Guide a Junior 🎓",
+    body: "A short chat or referral tip can make a huge difference for recent grads. Set your 'Open To' status if you're happy to mentor."
+  },
+  {
+    title: "Share a Milestone 🎉",
+    body: "Started a new role, shipped a project, or earned a certification? Share your update with the Chaibasa Engineering community."
+  },
+  {
+    title: "Coffee Break Check-In ☕",
+    body: "Taking a 2-minute break? Scroll through the latest discussions and career tips from fellow alumni."
+  },
+  {
+    title: "Branch Network 🛠️",
+    body: "Reconnect with peers from your engineering department—filter the directory by branch to see where everyone is working now."
+  },
+  {
+    title: "Internship Leads 🌱",
+    body: "Know of an internship opening at your company? Posting it on the Job Board helps current students get their start."
+  },
+  {
+    title: "Side Projects & Startups ⚡",
+    body: "Building something interesting outside work? Share it on the feed to find collaborators or feedback from fellow engineers."
+  },
+  {
+    title: "Invite a Classmate 📨",
+    body: "Missing a hostel mate or study partner on ConnectAlumni? Share the platform link so your whole batch stays in touch."
+  },
+  {
+    title: "Career Lessons 🧭",
+    body: "What is one practical tip you wish you knew during campus placements? Post it on the feed to help upcoming batches."
+  },
+  {
+    title: "Higher Studies & Exams 📚",
+    body: "Preparing for GATE, CAT, or MS applications? Connect with alumni who have already walked that path."
+  },
+  {
+    title: "Open to Work 🔎",
+    body: "Exploring new opportunities? Turn on your 'Open To' badge so hiring alumni can easily find your profile."
+  },
+  {
+    title: "Campus Throwback 🏛️",
+    body: "From late-night exam prep to college fests—your CEC circle is still just one message away."
+  },
+  {
+    title: "Resume & Interview Tips 📄",
+    body: "Preparing for an upcoming interview? Reach out to alumni working in your target company or domain."
+  },
+  {
+    title: "Core Engineering Updates ⚙️",
+    body: "Mechanical, Civil, Electrical, ECE, or Metallurgy—connect with peers making an impact across core industries."
+  },
+  {
+    title: "Relocating Soon? 🗺️",
+    body: "Moving to Bengaluru, Pune, Hyderabad, Delhi NCR, or Ranchi? Search the directory by city to find alumni already settled there."
+  },
+  {
+    title: "One Connection This Week 🎯",
+    body: "Browse the directory and send one connection request to a senior, junior, or classmate you haven't spoken to recently."
+  },
+  {
+    title: "Hiring for Your Team? 📢",
+    body: "Post your team's open roles or employee referral details on ConnectAlumni to reach verified graduates directly."
+  },
+  {
+    title: "Cheer on a Batchmate 👍",
+    body: "Leave a quick comment or like on a recent post—small interactions keep our alumni network vibrant."
+  },
+  {
+    title: "Tech & Industry Trends 💻",
+    body: "What skills or tools are most in demand in your field right now? Start a quick discussion on the feed."
+  },
+  {
+    title: "Your Network, Always Open 🌐",
+    body: "Whether you're hiring, job hunting, or just catching up—thank you for being an active part of ConnectAlumni."
   }
 ];
 
@@ -133,9 +217,9 @@ async function runPeriodicAutoInbox(pool, io) {
 }
 
 module.exports = function initAutoInboxModule({ pool, io }) {
-  // Runs daily at 10:00 AM IST; sends once 4 days (minus 2h buffer) have passed
+  // Scheduled for 7:51 PM IST (51 19 * * *) so it runs ~30 mins from now, then every 4 days
   cron.schedule(
-    "0 10 * * *",
+    "51 19 * * *",
     () => {
       runPeriodicAutoInbox(pool, io).catch((err) =>
         console.error("❌ Scheduled auto-inbox error:", err.message)
