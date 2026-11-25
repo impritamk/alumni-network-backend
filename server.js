@@ -818,12 +818,30 @@ app.get("/api/messages/:roomId", verifyToken, async (req, res) => {
 
 app.post("/api/messages/:roomId", verifyToken, async (req, res) => {
   try {
-    if (!req.body.message.trim()) return res.status(400).json({ message: "Message cannot be empty" });
+    const rawMessage = typeof req.body.message === "string" ? req.body.message : "";
+    const trimmedMessage = rawMessage.trim();
+    if (!trimmedMessage) return res.status(400).json({ message: "Message cannot be empty" });
+
+    // Prevent accidental duplicate inserts when Send is clicked multiple times rapidly
+    const duplicateCheck = await pool.query(
+      `SELECT * FROM chat_messages
+       WHERE room_id = $1
+         AND sender_id = $2
+         AND TRIM(message) = $3
+         AND created_at >= NOW() - INTERVAL '3 seconds'
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [req.params.roomId, req.userId, trimmedMessage]
+    );
+
+    if (duplicateCheck.rows.length > 0) {
+      return res.json({ message: duplicateCheck.rows[0], deduplicated: true });
+    }
     
     // 1. Save message to PostgreSQL
     const newMsg = await pool.query(
       `INSERT INTO chat_messages (room_id, sender_id, message, created_at) VALUES ($1, $2, $3, NOW()) RETURNING *`,
-      [req.params.roomId, req.userId, req.body.message]
+      [req.params.roomId, req.userId, rawMessage]
     );
 
     // 2. Broadcast the message instantly to the WebSocket room
@@ -834,6 +852,7 @@ app.post("/api/messages/:roomId", verifyToken, async (req, res) => {
     res.status(500).json({ message: "Failed to send message" }); 
   }
 });
+
 app.delete("/api/messages/room/:roomId", verifyToken, async (req, res) => {
   try {
     // Ensure the user actually belongs to this room before deleting
@@ -857,6 +876,11 @@ app.delete("/api/messages/room/:roomId", verifyToken, async (req, res) => {
 
 app.get("/api/inbox", verifyToken, async (req, res) => {
   try {
+    // Keep the shared guest demo inbox clean by hiding automated broadcast threads
+    if (req.userEmail === "alumninetworkplatform@gmail.com") {
+      return res.json({ rooms: [] });
+    }
+
     // 1. Fetch all rooms (Query 1)
     const rooms = await pool.query(`
       SELECT cr.*, COALESCE((SELECT MAX(created_at) FROM chat_messages WHERE room_id = cr.id), cr.created_at) as last_activity
@@ -923,7 +947,6 @@ app.get("/api/inbox", verifyToken, async (req, res) => {
 });
 
 app.use((err, req, res, next) => { console.error("❌ Error:", err); res.status(500).json({ message: "Server error" }); });
-
 const PORT = process.env.PORT || 5000;
 app.get("/", (req, res) => {
   res.status(200).json({ status: "ok" });
