@@ -942,6 +942,8 @@ const io = new Server(server, {
 });
 
 app.set("io", io);
+const initAutoInboxModule = require("./routes/autoInbox");
+app.use("/api", initAutoInboxModule({ pool, io }));
 
 io.on("connection", (socket) => {
   socket.on("joinRoom", (roomId) => {
