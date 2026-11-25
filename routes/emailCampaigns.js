@@ -4,7 +4,7 @@ const cron = require("node-cron");
 
 const router = express.Router();
 
-// 100 rotating templates for the automatic every-3-days email
+// 100 rotating templates for the automated periodic email
 const AUTO_EMAIL_TEMPLATES = [
   { key: "hello_world", subject: "Hello World! (It's been a while) 👋", content: "Just a quick ping to see how you are doing!\n\nThe ConnectAlumni network has been growing, and your batchmates are missing you. We have some fresh job postings and new conversations happening right now.\n\nTake a quick break from your screen and come say hi!" },
   { key: "error_404", subject: "Error 404: Alumni Not Found 🔍", content: "We ran a search for you on the network recently, but you were nowhere to be found!\n\nDon't worry, we saved your spot. The Chaibasa Engineering community has been sharing some great new job referrals and interview tips this week.\n\nLog back in and let us know what you've been working on lately!" },
@@ -118,7 +118,7 @@ function escapeHtml(str = "") {
 
 async function sendAutoEmail(email, name, subject, content) {
   const safeName = escapeHtml(name || "Alumni");
-  
+
   // Splits text by double-newlines into properly spaced paragraphs
   const formattedBody = escapeHtml(content)
     .split(/\n\s*\n/)
@@ -136,11 +136,11 @@ async function sendAutoEmail(email, name, subject, content) {
         <a href="${process.env.FRONTEND_URL}" style="display: inline-block; background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 8px; font-weight: bold;">
           Open ConnectAlumni
         </a>
-        
+
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 28px 0 16px 0;" />
         <p style="color: #94a3b8; font-size: 12px; line-height: 1.5; margin: 0;">
-          <strong>Please do not reply to this email</strong>—this inbox is unmonitored.<br/>
-          You receive this brief check-in once every 3 days to share community updates and keep our free alumni platform active and running smoothly.
+          This is an automated notification sent to keep our database and platform active and available.<br/>
+          Please do not reply to this email, as this mailbox is not monitored.
         </p>
       </div>
     </div>
@@ -170,18 +170,19 @@ async function ensureLogTable(pool) {
   `);
 }
 
-async function runThreeDayAutoCampaign(pool) {
+async function runPeriodicAutoCampaign(pool) {
   await ensureLogTable(pool);
 
   const lastLog = await pool.query(
     "SELECT template_index, sent_at FROM automated_email_logs ORDER BY id DESC LIMIT 1"
   );
 
-  // Enforce exact 3-day gap
+  // Enforce a 4-day gap with a 2-hour buffer (94 hours) so send time or clock drift never skips a run
   if (lastLog.rows.length > 0) {
     const lastSent = new Date(lastLog.rows[0].sent_at);
-    const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
-    if (Date.now() - lastSent.getTime() < threeDaysMs) {
+    const fourDaysMs = 4 * 24 * 60 * 60 * 1000;
+    const bufferMs = 2 * 60 * 60 * 1000;
+    if (Date.now() - lastSent.getTime() < fourDaysMs - bufferMs) {
       return;
     }
   }
@@ -214,7 +215,7 @@ async function runThreeDayAutoCampaign(pool) {
     [nextIndex, template.key, sentCount]
   );
 
-  console.log(`✅ 3-Day Auto Email [${template.key}] sent to ${sentCount} users.`);
+  console.log(`✅ Periodic Auto Email [${template.key}] sent to ${sentCount} users.`);
 }
 
 module.exports = function initEmailModule({ pool, verifyToken, requireAdmin }) {
@@ -229,12 +230,12 @@ module.exports = function initEmailModule({ pool, verifyToken, requireAdmin }) {
     }
   });
 
-  // Runs every day at 10:00 AM IST; sends if 3 days have passed
+  // Runs every day at 10:00 AM IST; sends once 4 days have elapsed since the last run
   cron.schedule(
     "0 10 * * *",
     () => {
-      runThreeDayAutoCampaign(pool).catch((err) =>
-        console.error("❌ Scheduled 3-day campaign error:", err.message)
+      runPeriodicAutoCampaign(pool).catch((err) =>
+        console.error("❌ Scheduled periodic campaign error:", err.message)
       );
     },
     { timezone: "Asia/Kolkata" }
